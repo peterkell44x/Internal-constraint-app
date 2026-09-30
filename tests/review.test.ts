@@ -71,3 +71,9 @@ test("paragraph budgets only appear when the narrative is over, and sum under th
   assert.ok(budgets.reduce((a, b) => a + b, 0) <= 260);
   assert.ok(budgets[0] > budgets[2]);
 });
+
+test("extractProfile takes only the profile block", async () => {
+  const { extractProfile } = await import("../src/lib/diagnostic/review.ts");
+  assert.equal(extractProfile("<issues>\n- x\n</issues>\n<profile>\n" + good + "\n</profile>"), good);
+  assert.equal(extractProfile(good), null);
+});

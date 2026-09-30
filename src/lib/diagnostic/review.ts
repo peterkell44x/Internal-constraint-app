@@ -52,6 +52,12 @@ export function isWellFormed(raw: string): boolean {
   );
 }
 
+/** Pulls the corrected profile out of the reviewer's reply, or null if the block is missing. */
+export function extractProfile(reply: string): string | null {
+  const m = reply.match(/<profile>([\s\S]*?)<\/profile>/);
+  return m ? m[1].trim() : null;
+}
+
 /** The conversation as plain text, without the hidden "Begin the diagnostic." opener. */
 export function formatTranscript(history: { role: "user" | "assistant"; content: string }[], opener: string): string {
   return history
@@ -66,8 +72,8 @@ export function buildReviewSystem(d: Domain): string {
   + "Rule one, facts. Go through the draft sentence by sentence and check every detail against what the PERSON actually wrote in the conversation. Only the person's own messages count as facts. Something the GUIDE said does not count unless the person confirmed it in their own words. Remove or correct any detail that is not there, including years, dates, ages, numbers, names, places, jobs, relationship status, who ended a relationship, timing words such as last month or recently, arithmetic on their numbers, invented scenes or actions, and feelings or motives given to anyone. Anything in quotation marks must be word for word what the person wrote, otherwise remove the quotation marks. If the person said they did not know something, the draft must not answer it. Do not introduce any new detail, comparison, or calculation of your own while editing.\n\n"
   + "Rule two, interpretations. A statement about what something means, why someone did something, or what anyone felt, wanted, or intended is an interpretation. If the person confirmed it in their own words, it can stay direct. If they did not, rewrite it as the profile's read, using language like it looks like, this suggests, or the pattern here seems to be. This applies to what the draft says about other people in their life too.\n\n"
   + "Rule three, length. The narrative must be " + NARRATIVE_MAX_WORDS + " words or fewer and each of the two final sections must be " + SECTION_MAX_WORDS + " words or fewer. These are hard limits. You will be told the current word counts. When a part is over, aim for about " + NARRATIVE_TARGET_WORDS + " words for the narrative and about " + SECTION_TARGET_WORDS + " for a final section. Cut repetition, restatement, and secondary detail first. Never cut the verbal programming, the anchoring incident, the mechanism with its evidence, where they stand today, or the one shift, and never cut the concrete action in the counter belief section.\n\n"
-  + "Keep the exact structure. The narrative stays as plain paragraphs with no headers, labels, asterisks, or bullets. Then the marker [SPLIT] on its own line, then the section that starts with the exact words " + CONSTRAINT_PREFIX + " and then the marker [SPLIT] on its own line, then the section that starts with the exact words " + COUNTER_PREFIX + " Do not add anything new that is not in the draft or the conversation. Do not add a closing line, a note about your edits, or a question.\n\n"
-  + "Output only the corrected profile, starting with its first word and ending with the last word of the counter belief section.";
+  + "Keep the exact structure. The narrative stays as plain paragraphs with no headers, labels, asterisks, or bullets. Then the marker [SPLIT] on its own line, then the section that starts with the exact words " + CONSTRAINT_PREFIX + " and then the marker [SPLIT] on its own line, then the section that starts with the exact words " + COUNTER_PREFIX + " If the draft uses the word architecture, keep it, once, where it fits. Do not add anything new that is not in the draft or the conversation. Do not add a closing line, a note about your edits, or a question.\n\n"
+  + "Work in two steps and use this exact output format. First, inside <issues> and </issues>, list every problem you find, one short line each: the detail or sentence, and whether it is not in the conversation, an unconfirmed interpretation, or a length problem. Then, inside <profile> and </profile>, write the full corrected profile, starting with its first word and ending with the last word of the counter belief section. Fix every issue you listed. Write nothing outside those two blocks.";
 }
 
 /**

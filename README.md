@@ -53,6 +53,10 @@ Prompt changes made after porting (applied to both `prompts.ts` and the referenc
 - The report prompt forbids details the user never gave (years, timing words, arithmetic on their numbers, invented scenes, inexact quotes) and requires unconfirmed interpretations to be marked as the report's read.
 - The report prompt states its word limits as hard limits with per-paragraph sentence budgets.
 
+- The chat prompt forbids assuming anything unstated (gender, relationship status, what happened between people, what others meant or felt) and treats anything the person says they don't know as unknown.
+
+Report review pass (`src/lib/diagnostic/review.ts`): the first draft reliably ran past the word limits and sometimes added details or unhedged interpretations, and prompt wording alone did not fix that. After the draft, the server sends it back with the conversation, its measured word counts and per-paragraph word budgets. The reviewer lists the problems it finds and returns a corrected profile. Further passes run only while a part is still over its limit (at most 3). A revision that breaks the report's structure is discarded, and if the review call fails the draft is kept. The first draft is saved in `reportDraft` for comparison. A report takes about 30 to 45 seconds.
+
 Other differences from the prototype, all outside the prompts:
 
 - The conversation lives in the database, so a reload or a new device picks up where you left off.
