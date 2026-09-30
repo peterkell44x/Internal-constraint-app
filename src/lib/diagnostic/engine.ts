@@ -13,6 +13,14 @@ import {
   buildReportSystem,
   buildSystemPrompt,
 } from "./prompts";
+import {
+  buildReviewInput,
+  buildReviewSystem,
+  formatTranscript,
+  isOverLimits,
+  isWellFormed,
+  reportLengths,
+} from "./review";
 import { splitReadyMarker, splitReport, stripDashes } from "./text";
 
 // Server-side port of the prototype's diagnostic engine. The model call
@@ -35,12 +43,20 @@ function getClient(): Anthropic {
   return client;
 }
 
-async function callClaude(msgs: ChatMessage[], system: string, maxTokens = MAX_TOKENS): Promise<string> {
+async function callClaude(
+  msgs: ChatMessage[],
+  system: string,
+  maxTokens = MAX_TOKENS,
+  think = false,
+): Promise<string> {
   const response = await getClient().messages.create({
     model: MODEL,
     max_tokens: maxTokens,
     system,
     messages: msgs,
+    // Only the review pass thinks; chat turns and the first draft run exactly as tuned.
+    // Low effort keeps the review to a quick, careful check rather than minutes of thinking.
+    ...(think ? { thinking: { type: "adaptive" as const }, output_config: { effort: "low" as const } } : {}),
   });
   if (response.stop_reason === "max_tokens") {
     console.warn("Claude reply hit max_tokens (" + maxTokens + ") and was cut off");
@@ -115,11 +131,57 @@ export interface Report {
   narrative: string;
   constraint: string;
   counterBelief: string;
+  /** The first draft before review, kept for tuning. */
+  draft: string;
 }
 
-/** Mirrors the prototype's report button handler. */
+// The review pass thinks before editing, so it needs room for that too.
+const REVIEW_MAX_TOKENS = 16000;
+
+// At most this many review passes. The second only runs if the first still
+// leaves a part over its word limit.
+const MAX_REVIEW_PASSES = 2;
+
+/** Mirrors the prototype's report button handler, followed by the review pass. */
 export async function generateReport(domain: DomainKey, history: ChatMessage[]): Promise<Report> {
   const reportMsgs: ChatMessage[] = history.concat([{ role: "user", content: REPORT_REQUEST_MESSAGE }]);
-  const summary = await callClaude(reportMsgs, buildReportSystem(DOMAINS[domain]), REPORT_MAX_TOKENS);
-  return { raw: summary, ...splitReport(summary, REPORT_SPLIT_MARKER) };
+  const draft = await callClaude(reportMsgs, buildReportSystem(DOMAINS[domain]), REPORT_MAX_TOKENS);
+
+  let current = draft;
+  const transcript = formatTranscript(history, BEGIN_MESSAGE);
+  for (let pass = 1; pass <= MAX_REVIEW_PASSES; pass++) {
+    const parts = splitReport(current, REPORT_SPLIT_MARKER);
+    // The first pass always runs (facts and interpretations); later ones only for length.
+    if (pass > 1 && !isOverLimits(parts)) break;
+    let revised: string;
+    try {
+      revised = await callClaude(
+        [{ role: "user", content: buildReviewInput(transcript, current, parts) }],
+        buildReviewSystem(DOMAINS[domain]),
+        REVIEW_MAX_TOKENS,
+        true,
+      );
+    } catch (e) {
+      // A reviewed report is better, but an unreviewed one beats no report.
+      console.error("Report review pass " + pass + " failed; keeping the previous version", e);
+      break;
+    }
+    if (!isWellFormed(revised)) {
+      console.warn(
+        "Report review pass " + pass + " returned a malformed report; keeping the previous version. Start: " +
+          JSON.stringify(revised.slice(0, 200)),
+      );
+      break;
+    }
+    const before = reportLengths(parts);
+    const after = reportLengths(splitReport(revised, REPORT_SPLIT_MARKER));
+    console.info(
+      "Report review pass " + pass + ": words " +
+        [before.narrative, before.constraint, before.counterBelief].join("/") + " -> " +
+        [after.narrative, after.constraint, after.counterBelief].join("/"),
+    );
+    current = revised;
+  }
+
+  return { raw: current, draft, ...splitReport(current, REPORT_SPLIT_MARKER) };
 }

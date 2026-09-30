@@ -22,6 +22,7 @@ export async function POST(_req: Request, ctx: RouteContext<"/api/diagnostics/[i
   await saveIfUnchanged(d, {
     status: "completed",
     reportRaw: report.raw,
+    reportDraft: report.draft,
     narrative: report.narrative,
     constraint: report.constraint,
     counterBelief: report.counterBelief,

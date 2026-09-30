@@ -43,6 +43,7 @@ model Diagnostic {
   userTurns Int      @default(0)
 
   reportRaw     String? // unparsed model output, kept for safety
+  reportDraft   String? // first draft before the review pass
   narrative     String?
   constraint    String?
   counterBelief String?
