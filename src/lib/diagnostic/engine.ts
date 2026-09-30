@@ -25,6 +25,9 @@ export type ChatMessage = { role: "user" | "assistant"; content: string };
 // The model and max_tokens the prototype was tuned on.
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
 const MAX_TOKENS = 1000;
+// The report is much longer than a chat turn; give it headroom so it is never
+// cut off before the counter belief section. Length is controlled by the prompt.
+const REPORT_MAX_TOKENS = 2000;
 
 let client: Anthropic | null = null;
 function getClient(): Anthropic {
@@ -32,13 +35,16 @@ function getClient(): Anthropic {
   return client;
 }
 
-async function callClaude(msgs: ChatMessage[], system: string): Promise<string> {
+async function callClaude(msgs: ChatMessage[], system: string, maxTokens = MAX_TOKENS): Promise<string> {
   const response = await getClient().messages.create({
     model: MODEL,
-    max_tokens: MAX_TOKENS,
+    max_tokens: maxTokens,
     system,
     messages: msgs,
   });
+  if (response.stop_reason === "max_tokens") {
+    console.warn("Claude reply hit max_tokens (" + maxTokens + ") and was cut off");
+  }
   const text = response.content
     .map((b) => (b.type === "text" ? b.text : ""))
     .join("\n")
@@ -114,6 +120,6 @@ export interface Report {
 /** Mirrors the prototype's report button handler. */
 export async function generateReport(domain: DomainKey, history: ChatMessage[]): Promise<Report> {
   const reportMsgs: ChatMessage[] = history.concat([{ role: "user", content: REPORT_REQUEST_MESSAGE }]);
-  const summary = await callClaude(reportMsgs, buildReportSystem(DOMAINS[domain]));
+  const summary = await callClaude(reportMsgs, buildReportSystem(DOMAINS[domain]), REPORT_MAX_TOKENS);
   return { raw: summary, ...splitReport(summary, REPORT_SPLIT_MARKER) };
 }

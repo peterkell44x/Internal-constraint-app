@@ -44,11 +44,16 @@ The prototype (`reference/internal-constraint-diagnostic.html`) is kept in the r
 | `callClaude`, `startConversation`, `sendMessage`, report generation | `src/lib/diagnostic/engine.ts` (server side) |
 | Chat UI | `src/components/DiagnosticSession.tsx` |
 
-The model call is the same as before: same model, `max_tokens: 1000`, the same system prompts, the same `"Begin the diagnostic."` opener and `"Please generate my profile report now."` request, and dashes stripped from every reply. The 16-answer hard ceiling switches to the force-close prompt as before. The `[READY_FOR_REPORT]` marker ends the conversation and unlocks the report button.
+The model call is the same as before: same model, `max_tokens: 1000` for chat turns (2000 for the report, so it is never cut off), the same system prompts, the same `"Begin the diagnostic."` opener and `"Please generate my profile report now."` request, and dashes stripped from every reply. The 16-answer hard ceiling switches to the force-close prompt as before. The `[READY_FOR_REPORT]` marker ends the conversation and unlocks the report button.
 
 `tests/parity.test.ts` loads the prototype's own JavaScript and checks that every domain's prompts, the constants and the dash stripping come out byte-for-byte identical. **If you retune a prompt, change it in both places** (or update the reference file) so the test keeps guarding it.
 
-Differences from the prototype, all outside the prompts:
+Prompt changes made after porting (applied to both `prompts.ts` and the reference file):
+
+- The report prompt forbids details the user never gave (years, timing words, arithmetic on their numbers, invented scenes, inexact quotes) and requires unconfirmed interpretations to be marked as the report's read.
+- The report prompt states its word limits as hard limits with per-paragraph sentence budgets.
+
+Other differences from the prototype, all outside the prompts:
 
 - The conversation lives in the database, so a reload or a new device picks up where you left off.
 - If an API call fails, the answer is not saved and goes back into the input box to resend. In the prototype it stayed in the history, which could leave two user turns in a row.
