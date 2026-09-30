@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Internal Constraint Diagnostic</title>
+<style>
+  :root {
+    --bg: #faf9f6;
+    --card: #ffffff;
+    --border: #e5e2da;
+    --text: #2c2c2a;
+    --text-secondary: #6b6a63;
+    --accent: #3c3489;
+    --accent-bg: #eeedfe;
+    --accent-text: #26215c;
+    --danger-bg: #faece7;
+    --danger-text: #712b13;
+    --danger-border: #f0997b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    justify-content: center;
+    padding: 32px 16px;
+  }
+  .wrap { max-width: 640px; width: 100%; }
+  .header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--accent-bg); color: var(--accent-text);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; flex-shrink: 0;
+  }
+  .header h1 { font-size: 16px; font-weight: 600; margin: 0; }
+  .header p { font-size: 13px; color: var(--text-secondary); margin: 2px 0 0; }
+
+  #domainSelect {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  #domainSelect p.prompt { font-size: 14px; margin: 0 0 14px; color: var(--text); }
+  .domain-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .domain-btn {
+    text-align: left;
+    padding: 14px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: white;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .domain-btn:hover { background: var(--accent-bg); border-color: var(--accent); }
+  .domain-btn span {
+    display: block;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+
+  #appArea { display: none; }
+
+  #chat {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    height: 420px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .bubble {
+    padding: 10px 14px;
+    border-radius: 14px;
+    max-width: 82%;
+    font-size: 14px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+  }
+  .bubble.user {
+    align-self: flex-end;
+    background: var(--accent);
+    color: white;
+  }
+  .bubble.assistant {
+    align-self: flex-start;
+    background: #f3f2ee;
+    color: var(--text);
+  }
+  .bubble.error {
+    align-self: flex-start;
+    background: var(--danger-bg);
+    color: var(--danger-text);
+    border: 1px solid var(--danger-border);
+    font-size: 13px;
+  }
+  .typing {
+    align-self: flex-start;
+    font-size: 13px;
+    color: var(--text-secondary);
+    padding: 4px 14px;
+  }
+  .input-row { display: flex; gap: 8px; }
+  input[type="text"] {
+    flex: 1;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    font-size: 14px;
+    outline: none;
+  }
+  input[type="text"]:focus { border-color: var(--accent); }
+  button {
+    padding: 10px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: white;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  button:hover { background: #f3f2ee; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .send-btn { background: var(--accent); color: white; border: none; }
+  .footer-row {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 10px;
+  }
+  .turn-count { font-size: 12px; color: var(--text-secondary); }
+  #reportBtn { display: none; font-size: 13px; }
+  #retryBtn { display: none; margin-top: 8px; font-size: 13px; }
+  #switchDomainBtn { font-size: 12px; padding: 6px 10px; }
+  #report {
+    display: none;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-bottom: 14px;
+    font-size: 14px;
+    line-height: 1.7;
+    white-space: pre-line;
+  }
+  #report h2 { font-size: 14px; font-weight: 600; margin: 0 0 10px; }
+  .constraint-block {
+    background: var(--accent-bg);
+    color: var(--accent-text);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-top: 16px;
+    font-size: 14px;
+    line-height: 1.6;
+    font-weight: 500;
+  }
+  .solution-block {
+    background: #f3f2ee;
+    color: var(--text);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-top: 10px;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .block-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.7;
+    margin: 0 0 6px;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <div class="avatar">&#10022;</div>
+    <div>
+      <h1 id="headerTitle">Internal constraint diagnostic</h1>
+      <p id="headerSubtitle">Choose a domain to begin</p>
+    </div>
+  </div>
+
+  <div id="domainSelect">
+    <p class="prompt">Which part of your life do you want to diagnose right now?</p>
+    <div class="domain-grid">
+      <button class="domain-btn" data-domain="money">Money &amp; Abundance<span>Your relationship with money, work, and building something of your own</span></button>
+      <button class="domain-btn" data-domain="relationships">Love &amp; Relationships<span>Your relationship with connection, intimacy, and being with someone</span></button>
+      <button class="domain-btn" data-domain="fitness">Fitness &amp; Health<span>Your relationship with your body, food, and discipline</span></button>
+      <button class="domain-btn" data-domain="happiness">Happiness &amp; Peace<span>Your relationship with rest, contentment, and your own worth</span></button>
+    </div>
+  </div>
+
+  <div id="appArea">
+    <div id="chat"></div>
+    <div id="report"></div>
+
+    <div class="input-row">
+      <input id="msgInput" type="text" placeholder="Type your answer..." autocomplete="off" />
+      <button id="sendBtn" class="send-btn">Send</button>
+    </div>
+    <div class="footer-row">
+      <span id="turnCount" class="turn-count"></span>
+      <div>
+        <button id="switchDomainBtn">Switch domain</button>
+        <button id="reportBtn">Generate profile report</button>
+      </div>
+    </div>
+    <button id="retryBtn">Retry</button>
+  </div>
+</div>
+
+<script>
+const domainSelect = document.getElementById('domainSelect');
+const appArea = document.getElementById('appArea');
+const headerTitle = document.getElementById('headerTitle');
+const headerSubtitle = document.getElementById('headerSubtitle');
+const chat = document.getElementById('chat');
+const input = document.getElementById('msgInput');
+const sendBtn = document.getElementById('sendBtn');
+const reportBtn = document.getElementById('reportBtn');
+const retryBtn = document.getElementById('retryBtn');
+const switchDomainBtn = document.getElementById('switchDomainBtn');
+const reportDiv = document.getElementById('report');
+const turnCount = document.getElementById('turnCount');
+
+let messages = [];
+let userTurns = 0;
+let currentDomain = null;
+let SYSTEM_PROMPT = '';
+
+// ---- Domain definitions ----
+// Every field below is the ONLY thing that changes between domains.
+// All behavioral rules (dash stripping, readiness marker, hard ceiling,
+// relevance rule, anti assumption rule, neutrality rule) live once in the
+// shared template functions further down and never change per domain.
+const DOMAINS = {
+  money: {
+    label: 'Money & Abundance',
+    subtitle: 'Money & abundance domain',
+    reportTitle: 'money blueprint',
+    topicPhrase: 'money and abundance conditioning',
+    frameworkNote: 'based on the framework from Secrets of the Millionaire Mind by T. Harv Eker',
+    verbalDef: 'what they heard repeated growing up about money',
+    modelDef: 'what they watched the people around them do with money',
+    consciousExample: 'Someone can say all day that money is good, that they want to be rich, that they deserve success, and that is their conscious belief.',
+    subconsciousExample: 'consciously wanting money while subconsciously associating money with difficulty, danger, or not being for people like them',
+    goalPhrase: 'the money, the business success, and the abundance they want',
+    goalWord: 'money'
+  },
+  relationships: {
+    label: 'Love & Relationships',
+    subtitle: 'Love & relationships domain',
+    reportTitle: 'relationship blueprint',
+    topicPhrase: 'love and relationship conditioning',
+    frameworkNote: 'using the same verbal programming, modeling, and specific incidents framework the money blueprint model is built on, applied here to love and relationships',
+    verbalDef: 'what they heard repeated growing up about love, relationships, marriage, or being wanted',
+    modelDef: 'what they watched the people around them do in their own relationships, such as how their parents or caregivers loved, fought, stayed, or left',
+    consciousExample: 'Someone can say all day that they want real love, that they are ready for a partner, that they deserve to be loved well, and that is their conscious belief.',
+    subconsciousExample: 'consciously wanting real connection while subconsciously associating closeness with abandonment, danger, suffocation, or not being safe',
+    goalPhrase: 'the relationship, the connection, and the love they want',
+    goalWord: 'love'
+  },
+  fitness: {
+    label: 'Fitness & Health',
+    subtitle: 'Fitness & health domain',
+    reportTitle: 'body blueprint',
+    topicPhrase: 'body and health conditioning',
+    frameworkNote: 'using the same verbal programming, modeling, and specific incidents framework the money blueprint model is built on, applied here to the body and health',
+    verbalDef: 'what they heard repeated growing up about their body, food, weight, or discipline',
+    modelDef: 'what they watched the people around them do with their own body, food, or exercise',
+    consciousExample: 'Someone can say all day that they want to be strong and healthy, that they care about their body, and that is their conscious belief.',
+    subconsciousExample: 'consciously wanting a strong healthy body while subconsciously associating effort with punishment, food with comfort or danger, or their body with something to hide',
+    goalPhrase: 'the body, the health, and the physical vitality they want',
+    goalWord: 'body'
+  },
+  happiness: {
+    label: 'Happiness & Peace',
+    subtitle: 'Happiness & peace domain',
+    reportTitle: 'peace blueprint',
+    topicPhrase: 'happiness and inner peace conditioning',
+    frameworkNote: 'using the same verbal programming, modeling, and specific incidents framework the money blueprint model is built on, applied here to happiness and peace',
+    verbalDef: 'what they heard repeated growing up about happiness, rest, deserving good things, or being at peace',
+    modelDef: 'what they watched the people around them do with joy, rest, contentment, or their own sense of worth',
+    consciousExample: 'Someone can say all day that they want to feel at peace, that they deserve to be happy, and that is their conscious belief.',
+    subconsciousExample: 'consciously wanting peace while subconsciously associating rest with laziness, contentment with danger, or happiness with something that gets taken away',
+    goalPhrase: 'the peace, the happiness, and the contentment they want',
+    goalWord: 'peace'
+  }
+};
+
+// ---- Shared prompt templates (domain agnostic scaffolding) ----
+
+function buildSystemPrompt(d) {
+  return "Never use any dash character in anything you write, not a hyphen used as a pause, not two hyphens together, not an em dash or en dash. If you want a pause, use a period or a comma. Before sending each message, check it for a dash character and remove it if you find one. This rule applies to every single message in this conversation, not just the final report.\n\n"
+  + "You are a sharp, unsentimental diagnostic guide helping someone find the one root pattern running underneath their " + d.topicPhrase + ", " + d.frameworkNote + ". There are three sources: verbal programming, meaning " + d.verbalDef + ". Modeling, meaning " + d.modelDef + ". And specific incidents, meaning single emotionally charged events that shaped a belief. For each, you are gauging awareness, meaning do they see it, understanding, meaning do they know why it formed, and disassociation, meaning has it stopped running them.\n\n"
+  + "What you are actually hunting for is not what they consciously say they believe. " + d.consciousExample + " You are hunting for the subconscious belief running underneath that, the association they never chose and usually cannot see, which is what actually drives their real experience. A conscious belief and a subconscious belief can point in opposite directions, for example " + d.subconsciousExample + ", and when the two conflict, the subconscious one wins. It shows up as the gap between what they say they want and what they keep actually getting. So never stop at a stated belief and treat it as the diagnosis. Use what they say as a clue, then push toward the belief that would actually explain why their lived experience keeps contradicting what they consciously want.\n\n"
+  + "Your real job is not to collect three tidy answers and stop. It is to find the mechanism. The specific thing they do right now that keeps proving the old belief true. A good diagnosis never ends on something like your mindset just has not caught up yet. That is a compliment wearing a constraint costume. Keep pushing past the first comfortable answer. If they describe something that sounds like an achievement or a strength, ask what it costs them or what it lets them avoid.\n\n"
+  + "Do not just fire question after question like an intake form. Most of the time, react first, briefly, like a sharp person actually listening would, then ask the next question. That reaction can be a real observation, a short read on what you just heard, genuine interest, or even quiet surprise, whatever is true to what they just told you. This should feel like a conversation with someone paying attention, not an interrogation. Keep every message brief, no more than two or three sentences total including both the reaction and the question, one idea at a time, never stack multiple observations or a long explanation into a single message. No lecturing, no mid conversation summaries, no hedging.\n\n"
+  + "A reaction is not the same as an interpretation. Reacting to what they said, being struck by it, noting it is a lot, noting it is interesting, is fine and encouraged. Naming what you think it means about them or their behavior is different and needs to be checked, not asserted. When you notice a pattern or want to name something you suspect, do not state it as an established fact. State it as something you are checking, using language like it sounds like, or here is what I am noticing, and end with a real question that lets them confirm, correct, or reject it. This applies especially to any word that carries a judgment, such as early, late, too much, not enough, wrong, or right. You do not know their situation well enough to judge it, you only know what they have told you, so hand the interpretation back to them rather than asserting it.\n\n"
+  + "Do not build a claim by connecting dots they never connected themselves. If you combine two separate things they told you into a new conclusion, that is a construction you made, not something they said, and you must flag it as your own inference before asking about it, not present it as their belief. Only refer to something as their belief or their situation if they used those words or something close to them. When in doubt, ask a plain open question instead of packaging your theory into the question. Never presuppose which side of a conflicting belief is objectively true. If two people in their life modeled opposite beliefs about this part of life, treat both as beliefs that were modeled to them, not as one correct view and one incorrect view they eventually saw through. Do not ask questions that assume one side was right and the other was wrong. Stay neutral about which belief matches reality and focus only on which belief they absorbed, how, and what it does to their behavior now. Write in plain, natural sentences in your own voice. Do not adopt vocabulary, phrasing, or a persona from any reference material the user has shown you in this conversation. No invented brand names, no repeated buzzwords, no borrowed catchphrases. Just talk like a sharp, direct person would.\n\n"
+  + "Start with verbal programming, move through modeling and specific incidents, but also probe briefly whether the same pattern shows up in other areas of their life, because the real constraint is usually not limited to this one part of life, it is a single operating pattern showing up in different forms. If you notice the same mechanism repeating across areas of their life, name that directly and ask a follow up that tests it further, do not let it slide.\n\n"
+  + "Dig for specifics every time. Ages, numbers, exact words someone said, exact moments. Vague answers do not get a real diagnosis. If an answer is generic, ask a sharper follow up before moving on.\n\n"
+  + "Do not treat the origin story and their current situation as two separate topics you move through in sequence. Once you have a real origin belief and a real current behavior, your job is to make them explicitly test whether the two are connected, not just describe both and assume the reader will connect them. Ask directly whether they can see the line between the old belief and the thing they are doing right now, and keep pushing until that connection is either confirmed in their own words or genuinely falls apart. Only once that link is established in the conversation itself, not just in your own head, are you allowed to consider the diagnosis ready.\n\n"
+  + "Once you can name the actual mechanism with real specifics behind it, and the connection between the origin and the present behavior has actually been tested and confirmed with them in conversation, not just assumed, tell them in one short sentence that you are ready to build their profile and to click Generate profile report. Do not announce readiness just because you have covered the three sources alone.\n\n"
+  + "The readiness message is different from every other message in this conversation. Every other message reacts and then asks a question, but the readiness message never asks a question, never adds a followup thought, never adds anything after telling them to click Generate profile report. It is one or two sentences and it stops. As the exact last thing in that message, on its own line with nothing before or after it on that line, output the marker [READY_FOR_REPORT] exactly as written. Only output that marker when you mean it, since the moment it appears the conversation ends and they can no longer reply to you. Never output that marker in any other message, and never explain or mention the marker itself to them.\n\n"
+  + "Every single question you ask must earn its place. Before asking anything, know exactly what it is testing, either digging one layer deeper into a belief you have not fully traced yet, testing whether the same mechanism shows up somewhere else, or directly confirming the link between the origin belief and their current behavior. If a question is not doing one of those three things, do not ask it. No idle curiosity, no rapport building small talk, no revisiting ground you already have a clear answer on, no wandering into a tangent just because it came up. If they mention something unrelated to the pattern you are tracing, do not chase it, acknowledge it briefly if needed and steer straight back to the thread you are actually building. This conversation should feel tight and purposeful the whole way through, every exchange pulling the picture into sharper focus, never loose or exploratory for its own sake.\n\n"
+  + "There is no fixed number of answers you are required to reach. If the mechanism is real, specific, and the connection to their current behavior has actually been tested and confirmed in their own words, you are done, whether that took six answers or fourteen. Do not pad the conversation with extra questions just to hit some invisible quota once you genuinely have it. But genuinely having it means real, dug for, confirmed specifics, not a fast comfortable first answer that merely sounds complete. Speed alone is never the test, depth is. This still has a hard ceiling though. By the user's 16th answer at the absolute latest, you must wrap up and tell them you are ready no matter what, so this never turns into a long drawn out conversation. Track the count as you go. If you reach that point without a fully confirmed connection, do not keep pushing, work with what you actually have and move to closing.";
+}
+
+function buildReportSystem(d) {
+  return "Write this person's " + d.reportTitle + " profile. Second person, direct, short declarative sentences. Plain paragraphs only, no headers, no asterisks, no bullet points, like you are talking to them, not describing them.\n\n"
+  + "Do not use any dash character anywhere in the output. Not a hyphen used as a pause, not two hyphens together, not an em dash or en dash. If you need a pause, use a period or a comma instead. Check your own output for this before finishing.\n\n"
+  + "Do not adopt vocabulary, phrasing, or a persona from any reference material the user has shown you in this conversation. No invented brand names, no repeated buzzwords like frequency or signal, no borrowed catchphrases. Write in plain, natural language.\n\n"
+  + "Do not settle for a surface read. Do not conclude with anything like your mindset just has not caught up yet or you are doing great, give it time. That is not a constraint, it is a compliment in disguise. If that is where your first draft lands, throw it out and go deeper. Before writing, privately ask yourself three times in a row why does this pattern actually exist, using each answer to dig past the last, and only write the profile once you have gone at least three layers past the first explanation.\n\n"
+  + "Use the specific details they actually gave you throughout. Real numbers, real names of people, real ages, real events, not paraphrase. The more specific and personal it reads, the better.\n\n"
+  + "Somewhere in the narrative, when it is actually true to what they told you, reach for the word architecture to describe how the pattern was built, meaning the underlying structure holding the belief up, not one single moment but the whole framework of repeated messages, models, and incidents that constructed it. Use it only where it genuinely fits and adds precision, never force it in if it does not, and never use it more than once.\n\n"
+  + "Structure, in this order, as flowing paragraphs with no labels in the output:\n1. The specific verbal programming and modeling that shaped them, using their real details.\n2. The specific incident or incidents that anchored the belief, and how they still show up as proof of it today.\n3. The actual mechanism. The concrete thing they do right now that keeps the old belief alive. Build this like a case, pointing to at least two or three separate specific things they told you as evidence it is a real pattern, not a one off. If the same mechanism showed up in another area of life they mentioned, say so explicitly and show how it is the same pattern in different clothes.\n4. A short paragraph on where they actually stand today, specific to what they said, not a generic scale.\n5. A short, compressed paragraph naming the one real shift that would change things. Not a pep talk. A precise, specific reframe that could only apply to this exact person based on what they told you. The kind of line that stings a little because it is true.\n\n"
+  + "After that narrative, add two final sections, separated from the narrative and from each other by the exact marker on its own line: [SPLIT]\n\n"
+  + "This is not an academic exercise. The whole point of finding this constraint is that it is the actual bottleneck standing between this person and " + d.goalPhrase + ". Every final section below must make that bottleneck explicit and causal, not just descriptive. Do not just describe the pattern. Say what it costs them. If someone reads this and cannot answer the question how exactly is this keeping me from " + d.goalPhrase + ", you have not done the job.\n\n"
+  + "First final section, after one [SPLIT] marker: start with the exact words Your subconscious internal constraint is: and then state the constraint itself in one or two plain, direct sentences. This must be the actual subconscious belief, the association running underneath whatever they consciously say they want, not a restatement of their conscious desire and not just a description of a behavior. Name the belief itself, and write it as the specific thing standing between them and their goal. It must name both the belief and the concrete way it blocks their success, for example by keeping them hidden, keeping them small, keeping them unfinished, keeping them unseen, or whatever the actual mechanism does to sabotage the outcome specifically. No metaphor, no poetic language. State it the way you would tell a friend the actual problem in one breath. Someone should be able to read only this line and immediately understand exactly how this is the reason they do not yet have what they want.\n\n"
+  + "Before finalizing this section, check whether the conversation surfaced a second real mechanism that is genuinely distinct from the main one you are naming, not just a smaller example of it. If it did, add one short sentence at the end of this section, starting with the words There is also, that names the second pattern in one clause and says plainly whether it feeds the main constraint or runs alongside it as its own thing. If the conversation only supports one clear mechanism, do not force a second one, leave this sentence out entirely.\n\n"
+  + "Second final section, after another [SPLIT] marker: start with the exact words The counter belief is: followed by the specific opposing belief in plain first person language, written as the belief that directly unlocks " + d.goalPhrase + ", not just a generic positive statement. It should be obvious from reading it why holding this belief instead would let them actually get " + d.goalPhrase + ". Then, still in this section, give one specific and obvious action that proves this counter belief true through direct experience, tied directly to the exact mechanism identified above, not a generic habit. Before giving the action, check what they actually told you about where their situation currently stands. The action must be something they can realistically do this week given that exact stage, not something that assumes a later stage they have not reached yet. If the real proof moment depends on a condition that is not true yet, say so directly and name the action as the next real step toward that moment instead, phrased so it is clear this is what unlocks the proof moment when the time comes. Never hand them a task they cannot actually do right now. Three to five sentences total for this section.\n\n"
+  + "Keep the narrative part under 260 words. Keep each final section under 75 words.\n\n"
+  + "This report is the final output of the whole conversation, not another turn in it. End your response the moment the counter belief section is finished. Do not add a closing line, a sign off, an offer to keep talking, or any further question of any kind, including something small like asking how that lands or what they think. Nothing comes after the counter belief section, not even one sentence. The last words you write must be part of that section itself.";
+}
+
+// ---- App logic (domain agnostic) ----
+
+function addMsg(role, text) {
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble ' + role;
+  bubble.textContent = text;
+  chat.appendChild(bubble);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function addError(text) {
+  const e = document.createElement('div');
+  e.className = 'bubble error';
+  e.textContent = text;
+  chat.appendChild(e);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function addTyping() {
+  const t = document.createElement('div');
+  t.id = 'typing';
+  t.className = 'typing';
+  t.textContent = 'thinking...';
+  chat.appendChild(t);
+  chat.scrollTop = chat.scrollHeight;
+}
+function removeTyping() {
+  const t = document.getElementById('typing');
+  if (t) t.remove();
+}
+
+function stripDashes(text) {
+  if (!text) return text;
+  return text
+    .replace(/\s*[—–]\s*/g, ', ')
+    .replace(/\s+--\s+/g, ', ')
+    .replace(/(\w)--(\w)/g, '$1, $2')
+    .replace(/,\s*,/g, ',')
+    .replace(/\s+([,.])/g, '$1');
+}
+
+async function callClaude(msgs, extraSystem) {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1000,
+      system: extraSystem || SYSTEM_PROMPT,
+      messages: msgs
+    })
+  });
+  if (!res.ok) {
+    let bodyText = '';
+    try { bodyText = await res.text(); } catch (e2) {}
+    throw new Error('HTTP ' + res.status + ' ' + res.statusText + (bodyText ? (' -- ' + bodyText.slice(0,200)) : ''));
+  }
+  const data = await res.json();
+  if (data.error) {
+    throw new Error(data.error.type + ': ' + data.error.message);
+  }
+  const text = (data.content || []).map(b => b.text || "").join("\n").trim();
+  return stripDashes(text);
+}
+
+const READY_MARKER = '[READY_FOR_REPORT]';
+const HARD_CEILING = 16;
+const FORCE_CLOSE_SYSTEM_PROMPT = "The diagnostic part of this conversation is over right now, regardless of whether you feel fully done. Do not ask any further questions, do not add any new observation or analysis, do not continue digging. Write one short, warm sentence or two telling the user you have what you need to build their profile now and to click Generate profile report. Do not use any dash character, not a hyphen used as a pause, not two hyphens together, not an em dash or en dash. As the exact last thing you write, on its own line with nothing else on that line, output the marker [READY_FOR_REPORT] exactly as written.";
+
+function handleReply(reply) {
+  const ready = reply.includes(READY_MARKER);
+  const clean = reply.split(READY_MARKER).join('').trim();
+  messages.push({ role: 'assistant', content: clean });
+  addMsg('assistant', clean);
+  if (ready) {
+    input.disabled = true;
+    sendBtn.disabled = true;
+    input.placeholder = 'Ready. Click Generate profile report below.';
+    reportBtn.style.display = 'inline-block';
+  }
+}
+
+async function startConversation() {
+  addTyping();
+  try {
+    const firstMsgs = [{ role: "user", content: "Begin the diagnostic." }];
+    const reply = await callClaude(firstMsgs);
+    removeTyping();
+    messages.push({ role: "user", content: "Begin the diagnostic." });
+    handleReply(reply);
+  } catch (e) {
+    removeTyping();
+    addError('Could not start: ' + e.message);
+    retryBtn.style.display = 'inline-block';
+  }
+}
+
+retryBtn.addEventListener('click', () => {
+  retryBtn.style.display = 'none';
+  startConversation();
+});
+
+async function sendMessage() {
+  const val = input.value.trim();
+  if (!val) return;
+  input.value = '';
+  addMsg('user', val);
+  messages.push({ role: 'user', content: val });
+  userTurns++;
+  turnCount.textContent = userTurns + ' answer' + (userTurns === 1 ? '' : 's') + ' so far';
+
+  addTyping();
+  try {
+    const forceClose = userTurns >= HARD_CEILING;
+    const reply = await callClaude(messages, forceClose ? FORCE_CLOSE_SYSTEM_PROMPT : null);
+    removeTyping();
+    handleReply(reply);
+  } catch (e) {
+    removeTyping();
+    addError('Error: ' + e.message);
+  }
+}
+
+sendBtn.addEventListener('click', sendMessage);
+input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(); });
+
+reportBtn.addEventListener('click', async () => {
+  reportBtn.disabled = true;
+  reportBtn.textContent = 'Building report...';
+  const reportSystem = buildReportSystem(currentDomain);
+  try {
+    const reportMsgs = messages.concat([{ role: "user", content: "Please generate my profile report now." }]);
+    const summary = await callClaude(reportMsgs, reportSystem);
+    const parts = summary.split('[SPLIT]').map(p => p.trim());
+    const narrative = (parts[0] || '').replace(/</g,'&lt;');
+    const constraint = (parts[1] || '').replace(/</g,'&lt;');
+    const solution = (parts[2] || '').replace(/</g,'&lt;');
+    reportDiv.style.display = 'block';
+    reportDiv.innerHTML = '<h2>Your ' + currentDomain.reportTitle + ' profile</h2><div>' + narrative + '</div>'
+      + (constraint ? '<div class="constraint-block"><p class="block-label">The constraint</p>' + constraint + '</div>' : '')
+      + (solution ? '<div class="solution-block"><p class="block-label">The counter belief</p>' + solution + '</div>' : '');
+    reportDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (e) {
+    reportDiv.style.display = 'block';
+    reportDiv.textContent = 'Could not generate report: ' + e.message;
+  }
+  reportBtn.disabled = false;
+  reportBtn.textContent = 'Generate profile report';
+});
+
+switchDomainBtn.addEventListener('click', () => {
+  appArea.style.display = 'none';
+  domainSelect.style.display = 'block';
+  headerSubtitle.textContent = 'Choose a domain to begin';
+  chat.innerHTML = '';
+  reportDiv.style.display = 'none';
+  reportDiv.innerHTML = '';
+  reportBtn.style.display = 'none';
+  input.disabled = false;
+  sendBtn.disabled = false;
+  input.placeholder = 'Type your answer...';
+  messages = [];
+  userTurns = 0;
+  currentDomain = null;
+});
+
+document.querySelectorAll('.domain-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const key = btn.getAttribute('data-domain');
+    currentDomain = DOMAINS[key];
+    SYSTEM_PROMPT = buildSystemPrompt(currentDomain);
+    headerSubtitle.textContent = currentDomain.subtitle;
+    domainSelect.style.display = 'none';
+    appArea.style.display = 'block';
+    turnCount.textContent = '';
+    startConversation();
+  });
+});
+</script>
+</body>
+</html>

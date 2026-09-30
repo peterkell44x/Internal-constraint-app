@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String?
+  passwordHash String
+  createdAt    DateTime     @default(now())
+  sessions     Session[]
+  diagnostics  Diagnostic[]
+}
+
+// Login sessions. The cookie holds a random token; only its SHA-256 hash is stored.
+model Session {
+  id        String   @id // sha256(token)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// One diagnostic conversation in one domain, and the report it produced.
+model Diagnostic {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  domain    String // "money" | "relationships" | "fitness" | "happiness"
+  // "in_progress": still talking; "ready": AI emitted the readiness marker;
+  // "completed": report generated and saved.
+  status    String   @default("in_progress")
+  // Full message history exactly as sent to the model, starting with the
+  // "Begin the diagnostic." user turn. JSON array of {role, content}.
+  messages  Json     @default("[]")
+  userTurns Int      @default(0)
+
+  reportRaw     String? // unparsed model output, kept for safety
+  narrative     String?
+  constraint    String?
+  counterBelief String?
+  completedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, createdAt])
+}
