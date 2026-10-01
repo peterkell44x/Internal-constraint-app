@@ -6,7 +6,6 @@ import {
   buildReviewInput,
   buildReviewSystem,
   countWords,
-  formatTranscript,
   isOverLimits,
   isWellFormed,
 } from "../src/lib/diagnostic/review.ts";
@@ -35,20 +34,8 @@ test("isOverLimits uses 260 for the narrative and 75 per section", () => {
   assert.ok(isOverLimits({ narrative: words(10), constraint: words(10), counterBelief: words(76) }));
 });
 
-test("formatTranscript drops the hidden opener and labels speakers", () => {
-  const t = formatTranscript(
-    [
-      { role: "user", content: "Begin the diagnostic." },
-      { role: "assistant", content: "What did you hear?" },
-      { role: "user", content: "Money is evil." },
-    ],
-    "Begin the diagnostic.",
-  );
-  assert.equal(t, "GUIDE: What did you hear?\n\nPERSON: Money is evil.");
-});
-
 test("review input reports counts and flags parts over the limit", () => {
-  const input = buildReviewInput("T", good, { narrative: words(300), constraint: words(20), counterBelief: words(80) });
+  const input = buildReviewInput(good, { narrative: words(300), constraint: words(20), counterBelief: words(80) });
   assert.match(input, /Narrative: 300 words, limit 260, OVER, cut to about 230/);
   assert.match(input, /Constraint section: 20 words, limit 75, within limit/);
   assert.match(input, /Counter belief section: 80 words, limit 75, OVER, cut to about 65/);
@@ -76,4 +63,10 @@ test("extractProfile takes only the profile block", async () => {
   const { extractProfile } = await import("../src/lib/diagnostic/review.ts");
   assert.equal(extractProfile("<issues>\n- x\n</issues>\n<profile>\n" + good + "\n</profile>"), good);
   assert.equal(extractProfile(good), null);
+});
+
+test("review input contains only the draft, not the conversation", () => {
+  const input = buildReviewInput(good, { narrative: words(300), constraint: words(20), counterBelief: words(20) });
+  assert.ok(input.startsWith("DRAFT PROFILE"));
+  assert.ok(!input.includes("CONVERSATION"));
 });

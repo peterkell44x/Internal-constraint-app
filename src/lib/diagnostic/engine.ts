@@ -17,7 +17,6 @@ import {
   buildReviewInput,
   buildReviewSystem,
   extractProfile,
-  formatTranscript,
   isOverLimits,
   isWellFormed,
   reportLengths,
@@ -131,30 +130,34 @@ export interface Report {
 // The review reply holds an issue list plus the full corrected profile.
 const REVIEW_MAX_TOKENS = 3000;
 
-// At most this many review passes. Passes after the first only run while a
-// part is still over its word limit (in testing, one pass usually suffices).
+// At most this many length passes. Each runs only while a part is still over
+// its word limit (in testing, one pass usually suffices).
 const MAX_REVIEW_PASSES = 3;
 
-/** Mirrors the prototype's report button handler, followed by the review pass. */
+/** Today's date, so the report can read "last year" correctly instead of guessing a year. */
+function todayLine(): string {
+  const today = new Intl.DateTimeFormat("en-US", { dateStyle: "long", timeZone: "UTC" }).format(new Date());
+  return "\n\nToday's date is " + today + ". Use it only to make sense of time references they made, such as last year. Do not put a date or year in the profile unless they stated it.";
+}
+
+/** Mirrors the prototype's report button handler, followed by the length pass. */
 export async function generateReport(domain: DomainKey, history: ChatMessage[]): Promise<Report> {
   const reportMsgs: ChatMessage[] = history.concat([{ role: "user", content: REPORT_REQUEST_MESSAGE }]);
-  const draft = await callClaude(reportMsgs, buildReportSystem(DOMAINS[domain]), REPORT_MAX_TOKENS);
+  const draft = await callClaude(reportMsgs, buildReportSystem(DOMAINS[domain]) + todayLine(), REPORT_MAX_TOKENS);
 
   let current = draft;
-  const transcript = formatTranscript(history, BEGIN_MESSAGE);
   for (let pass = 1; pass <= MAX_REVIEW_PASSES; pass++) {
     const parts = splitReport(current, REPORT_SPLIT_MARKER);
-    // The first pass always runs (facts and interpretations); later ones only for length.
-    if (pass > 1 && !isOverLimits(parts)) break;
+    if (!isOverLimits(parts)) break;
     let reply: string;
     try {
       reply = await callClaude(
-        [{ role: "user", content: buildReviewInput(transcript, current, parts) }],
+        [{ role: "user", content: buildReviewInput(current, parts) }],
         buildReviewSystem(DOMAINS[domain]),
         REVIEW_MAX_TOKENS,
       );
     } catch (e) {
-      // A reviewed report is better, but an unreviewed one beats no report.
+      // A shortened report is better, but an over-length one beats no report.
       console.error("Report review pass " + pass + " failed; keeping the previous version", e);
       break;
     }

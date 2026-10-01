@@ -50,12 +50,12 @@ The model call is the same as before: same model, `max_tokens: 1000` for chat tu
 
 Prompt changes made after porting (applied to both `prompts.ts` and the reference file):
 
-- The report prompt forbids details the user never gave (years, timing words, arithmetic on their numbers, invented scenes, inexact quotes) and requires unconfirmed interpretations to be marked as the report's read.
+- The report prompt allows only facts, numbers and events the person stated: no math on their numbers, and no invented dates, timing words, scenes or quotes. Interpretations, including confident ones, are allowed only when built visibly from what they said.
 - The report prompt states its word limits as hard limits with per-paragraph sentence budgets.
-
 - The chat prompt forbids assuming anything unstated (gender, relationship status, what happened between people, what others meant or felt) and treats anything the person says they don't know as unknown.
+- The report call also gets today's date, so relative references like "last year" are not turned into a guessed year.
 
-Report review pass (`src/lib/diagnostic/review.ts`): the first draft reliably ran past the word limits and sometimes added details or unhedged interpretations, and prompt wording alone did not fix that. After the draft, the server sends it back with the conversation, its measured word counts and per-paragraph word budgets. The reviewer lists the problems it finds and returns a corrected profile. Further passes run only while a part is still over its limit (at most 3). A revision that breaks the report's structure is discarded, and if the review call fails the draft is kept. The first draft is saved in `reportDraft` for comparison. A report takes about 30 to 45 seconds.
+Length pass (`src/lib/diagnostic/review.ts`): the first draft reliably runs past the word limits. When a part is over, the server sends the draft back with its measured word counts and per-paragraph budgets to be cut, and repeats while still over (at most 3 passes). This pass only shortens. It does not see the conversation, check facts or soften conclusions. A malformed result is discarded, and if the call fails the draft is kept. The first draft is saved in `reportDraft` for comparison.
 
 Other differences from the prototype, all outside the prompts:
 
