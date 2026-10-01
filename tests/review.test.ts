@@ -142,3 +142,20 @@ test("cut prompt has no dash characters and names the domain report", () => {
     assert.ok(!/[—–]|\w-\w|--/.test(sys), "dash in cut prompt");
   }
 });
+
+test("the where-you-stand-today paragraph is locked when the narrative has five paragraphs", () => {
+  const five = [para(1, 3), para(2, 3), para(3, 3), "Right now you are 29. You still leave the gym.", para(5, 3)].join("\n\n");
+  const raw = five + "\n\n[SPLIT]\n\nYour subconscious internal constraint is: X.\n\n[SPLIT]\n\nThe counter belief is: Y.";
+  const p = parts(raw);
+  const s = numberSentences(p);
+  const locked = s.filter((x) => x.locked && x.part === "narrative").map((x) => x.text);
+  assert.deepEqual(locked, ["Right now you are 29.", "You still leave the gym."]);
+  const out = parts(applyDeletions(s, s.map((x) => x.id), p));
+  assert.ok(out.narrative.includes("Right now you are 29. You still leave the gym."));
+});
+
+test("nothing extra is locked when the narrative does not have five paragraphs", () => {
+  const four = [para(1, 3), para(2, 3), "Right now you are 29.", para(4, 3)].join("\n\n");
+  const raw = four + "\n\n[SPLIT]\n\nYour subconscious internal constraint is: X.\n\n[SPLIT]\n\nThe counter belief is: Y.";
+  assert.equal(numberSentences(parts(raw)).filter((x) => x.locked && x.part === "narrative").length, 0);
+});

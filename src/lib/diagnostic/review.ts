@@ -80,6 +80,11 @@ export function splitSentences(paragraph: string): string[] {
     .filter(Boolean);
 }
 
+// The report prompt asks for five narrative paragraphs in a fixed order:
+// programming, incident, mechanism, where they stand today, the shift.
+const NARRATIVE_PARAGRAPHS = 5;
+const TODAY_PARAGRAPH = 3; // zero-based: the fourth paragraph
+
 export interface Sentence {
   id: number;
   part: PartName;
@@ -94,6 +99,10 @@ export function numberSentences(r: ReportParts): Sentence[] {
   const out: Sentence[] = [];
   for (const part of PART_ORDER) {
     const paragraphs = r[part].split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+    // Only lock "where they stand today" when the narrative has the expected
+    // shape; otherwise its position is unknown and nothing extra is locked.
+    const todayParagraph =
+      part === "narrative" && paragraphs.length === NARRATIVE_PARAGRAPHS ? TODAY_PARAGRAPH : -1;
     paragraphs.forEach((para, pi) => {
       for (const text of splitSentences(para)) {
         const isOpening = part !== "narrative" && out.every((s) => s.part !== part);
@@ -103,8 +112,9 @@ export function numberSentences(r: ReportParts): Sentence[] {
           paragraph: pi,
           text,
           // The opening sentence of each final section carries its required
-          // first words, and the prompt asks for "architecture" when it fits.
-          locked: isOpening || /\barchitecture\b/i.test(text),
+          // first words, the prompt asks for "architecture" when it fits, and
+          // the "where they stand today" paragraph is a required part.
+          locked: isOpening || pi === todayParagraph || /\barchitecture\b/i.test(text),
         });
       }
     });
@@ -157,7 +167,7 @@ export function applyDeletions(sentences: Sentence[], requested: number[], curre
 export function buildCutSystem(d: Domain): string {
   return "You are shortening a " + d.reportTitle + " profile that is over its word limits. You cannot rewrite anything. The profile has been split into numbered sentences, and the only thing you can do is choose whole sentences to delete. Every sentence you keep stays word for word, in its original order.\n\n"
   + "The narrative must be " + NARRATIVE_MAX_WORDS + " words or fewer and each of the two final sections must be " + SECTION_MAX_WORDS + " words or fewer. Delete as few sentences as possible to bring each part marked OVER under its limit, and only delete from parts marked OVER. Each sentence shows its word count so you can check the totals.\n\n"
-  + "Prefer sentences that repeat or restate something said elsewhere, or that add secondary detail. Do not delete a sentence that a kept sentence depends on to make sense, for example one that a later sentence points back to with words like that, this, it, or the same. Do not delete a sentence if that would make a kept sentence next to it read as being about something else. Never delete the verbal programming, the anchoring incident, the core of the mechanism, or the concrete action in the counter belief section. Avoid deleting every sentence of a paragraph. Sentences marked LOCKED cannot be deleted.\n\n"
+  + "Prefer sentences that repeat or restate something said elsewhere, or that add secondary detail. Do not delete a sentence that a kept sentence depends on to make sense, for example one that a later sentence points back to with words like that, this, it, or the same. Do not delete a sentence if that would make a kept sentence next to it read as being about something else. Never delete the verbal programming, the anchoring incident, the core of the mechanism, where they stand today, or the concrete action in the counter belief section. Avoid deleting every sentence of a paragraph. Sentences marked LOCKED cannot be deleted.\n\n"
   + "Use this exact output format. First, inside <notes> and </notes>, write at most ten short lines: the sentences you will delete, each with its word count and the reason it is safe to delete, then the running total, and check that each OVER part ends up under its limit. Then, on its own line, list the sentence numbers to delete, like this: <delete>3, 7, 12</delete>. Write nothing else.";
 }
 
