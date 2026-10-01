@@ -145,10 +145,24 @@ function todayLine(): string {
   return "\n\nToday's date is " + today + ". Use it only to make sense of time references they made, such as last year. Do not put a date or year in the profile unless they stated it.";
 }
 
+/**
+ * Added when the conversation was closed by the answer limit. Reaching the
+ * limit means the chat never declared the connection confirmed, so the report
+ * must not manufacture one.
+ */
+const CEILING_REPORT_NOTE =
+  "\n\nThis conversation reached its answer limit before the connection between the origin belief and their current behavior was tested and confirmed. Build the narrative, the mechanism, the constraint, and the counter belief only from what they actually stated or confirmed. If no specific belief and mechanism was confirmed, state the constraint at the level the conversation actually supports, even if that makes it less specific, rather than constructing a sharper one. This takes priority over the instructions above to go deeper, to build a case, and to make the constraint sting. Do not mention the answer limit or that the conversation ended early.";
+
 /** Mirrors the prototype's report button handler, followed by the length pass. */
-export async function generateReport(domain: DomainKey, history: ChatMessage[]): Promise<Report> {
+export async function generateReport(
+  domain: DomainKey,
+  history: ChatMessage[],
+  userTurns: number,
+): Promise<Report> {
   const reportMsgs: ChatMessage[] = history.concat([{ role: "user", content: REPORT_REQUEST_MESSAGE }]);
-  const draft = await callClaude(reportMsgs, buildReportSystem(DOMAINS[domain]) + todayLine(), REPORT_MAX_TOKENS);
+  const hitCeiling = userTurns >= HARD_CEILING;
+  const system = buildReportSystem(DOMAINS[domain]) + todayLine() + (hitCeiling ? CEILING_REPORT_NOTE : "");
+  const draft = await callClaude(reportMsgs, system, REPORT_MAX_TOKENS);
 
   let current = draft;
   for (let pass = 1; pass <= MAX_CUT_PASSES; pass++) {

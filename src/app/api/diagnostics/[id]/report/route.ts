@@ -13,7 +13,7 @@ export async function POST(_req: Request, ctx: RouteContext<"/api/diagnostics/[i
 
   let report;
   try {
-    report = await generateReport(d.domain, historyOf(d));
+    report = await generateReport(d.domain, historyOf(d), d.userTurns);
   } catch (e) {
     console.error("generateReport failed", e);
     return jsonError(502, "Could not generate report: " + describeError(e));
