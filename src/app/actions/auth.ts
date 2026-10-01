@@ -6,6 +6,7 @@ import * as z from "zod";
 
 import { createSession, destroySession } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { signupPasscodeOk } from "@/lib/signup";
 
 export type AuthFormState = { error?: string; email?: string } | undefined;
 
@@ -21,6 +22,10 @@ const LoginSchema = z.object({
 });
 
 export async function signup(_prev: AuthFormState, formData: FormData): Promise<AuthFormState> {
+  // Checked first, so nothing about existing accounts is revealed without it.
+  if (!signupPasscodeOk(String(formData.get("passcode") ?? ""))) {
+    return { error: "Incorrect sign-up passcode.", email: String(formData.get("email") ?? "") };
+  }
   const parsed = SignupSchema.safeParse({
     name: formData.get("name") || undefined,
     email: formData.get("email"),

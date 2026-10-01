@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "prisma migrate deploy && next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "node --test --experimental-strip-types --no-warnings tests/*.test.ts",
@@ -21,6 +21,7 @@
     "better-sqlite3": "^13.0.3",
     "dotenv": "^18.0.4",
     "next": "16.3.7",
+    "prisma": "^7.10.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "^0.0.1",
@@ -33,7 +34,9 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.7",
-    "prisma": "^7.10.0",
     "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

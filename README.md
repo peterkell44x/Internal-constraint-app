@@ -32,6 +32,20 @@ npm run dev                 # http://localhost:3000
 
 Other scripts: `npm run build`, `npm run lint`, `npm run typecheck`, `npm test`.
 
+## Deploying to Railway
+
+`railway.json` and the `start` script (`prisma migrate deploy && next start`) are set up so the app deploys from GitHub with no terminal. The database is a SQLite file, so it needs a Railway volume to survive redeploys.
+
+1. New project → Deploy from GitHub repo → this repo and branch.
+2. Add a volume to the service with mount path `/data`.
+3. Set these variables on the service:
+   - `ANTHROPIC_API_KEY`: your Claude API key
+   - `SIGNUP_PASSCODE`: the passcode needed to create an account
+   - `DATABASE_URL`: `file:/data/app.db`
+4. Generate a public domain under the service's networking settings.
+
+Sign-up asks for the passcode. In production, if `SIGNUP_PASSCODE` is missing, sign-up is closed.
+
 ## How the diagnostic engine was ported
 
 The prototype (`reference/internal-constraint-diagnostic.html`) is kept in the repo as the source of truth.

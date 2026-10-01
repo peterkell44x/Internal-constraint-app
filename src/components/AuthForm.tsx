@@ -7,10 +7,12 @@ import type { AuthFormState } from "@/app/actions/auth";
 
 interface Props {
   mode: "login" | "signup";
+  /** Show the sign-up passcode field. */
+  requirePasscode?: boolean;
   action: (prev: AuthFormState, formData: FormData) => Promise<AuthFormState>;
 }
 
-export default function AuthForm({ mode, action }: Props) {
+export default function AuthForm({ mode, action, requirePasscode = false }: Props) {
   const [state, formAction, pending] = useActionState(action, undefined);
   const isSignup = mode === "signup";
 
@@ -36,6 +38,12 @@ export default function AuthForm({ mode, action }: Props) {
           required
         />
       </label>
+      {isSignup && requirePasscode && (
+        <label>
+          Sign-up passcode
+          <input name="passcode" type="password" autoComplete="off" required />
+        </label>
+      )}
       {state?.error && <p className="form-error">{state.error}</p>}
       <button type="submit" className="primary" disabled={pending}>
         {pending ? "One moment..." : isSignup ? "Create account" : "Log in"}
