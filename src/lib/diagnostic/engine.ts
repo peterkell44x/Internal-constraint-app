@@ -14,11 +14,14 @@ import {
   buildSystemPrompt,
 } from "./prompts";
 import {
-  buildReviewInput,
-  buildReviewSystem,
-  extractProfile,
+  applyDeletions,
+  buildCutInput,
+  buildCutSystem,
   isOverLimits,
+  isOvercut,
   isWellFormed,
+  numberSentences,
+  parseDeletions,
   reportLengths,
 } from "./review";
 import { splitReadyMarker, splitReport, stripDashes } from "./text";
@@ -127,12 +130,14 @@ export interface Report {
   draft: string;
 }
 
-// The review reply holds an issue list plus the full corrected profile.
-const REVIEW_MAX_TOKENS = 3000;
+// The cut reply is the model's working notes (it checks which sentences others
+// depend on, which can run long) followed by the list of sentence numbers.
+// At 1000 tokens the notes were cut off before the list in testing.
+const CUT_MAX_TOKENS = 4000;
 
 // At most this many length passes. Each runs only while a part is still over
 // its word limit (in testing, one pass usually suffices).
-const MAX_REVIEW_PASSES = 3;
+const MAX_CUT_PASSES = 3;
 
 /** Today's date, so the report can read "last year" correctly instead of guessing a year. */
 function todayLine(): string {
@@ -146,33 +151,37 @@ export async function generateReport(domain: DomainKey, history: ChatMessage[]):
   const draft = await callClaude(reportMsgs, buildReportSystem(DOMAINS[domain]) + todayLine(), REPORT_MAX_TOKENS);
 
   let current = draft;
-  for (let pass = 1; pass <= MAX_REVIEW_PASSES; pass++) {
+  for (let pass = 1; pass <= MAX_CUT_PASSES; pass++) {
     const parts = splitReport(current, REPORT_SPLIT_MARKER);
     if (!isOverLimits(parts)) break;
+    const sentences = numberSentences(parts);
     let reply: string;
     try {
       reply = await callClaude(
-        [{ role: "user", content: buildReviewInput(current, parts) }],
-        buildReviewSystem(DOMAINS[domain]),
-        REVIEW_MAX_TOKENS,
+        [{ role: "user", content: buildCutInput(sentences, parts) }],
+        buildCutSystem(DOMAINS[domain]),
+        CUT_MAX_TOKENS,
       );
     } catch (e) {
       // A shortened report is better, but an over-length one beats no report.
-      console.error("Report review pass " + pass + " failed; keeping the previous version", e);
+      console.error("Report length pass " + pass + " failed; keeping the previous version", e);
       break;
     }
-    const revised = extractProfile(reply) ?? "";
-    if (!isWellFormed(revised)) {
-      console.warn(
-        "Report review pass " + pass + " returned a malformed report; keeping the previous version. Start: " +
-          JSON.stringify(reply.slice(0, 200)),
-      );
-      break;
+    const revised = applyDeletions(sentences, parseDeletions(reply), parts);
+    // An unusable reply (no list, only locked sentences, or far too much cut)
+    // changes nothing and the next pass simply asks again.
+    if (revised === current || !isWellFormed(revised)) {
+      console.warn("Report length pass " + pass + " removed nothing usable; trying again");
+      continue;
+    }
+    if (isOvercut(parts, splitReport(revised, REPORT_SPLIT_MARKER))) {
+      console.warn("Report length pass " + pass + " cut far more than needed; trying again");
+      continue;
     }
     const before = reportLengths(parts);
     const after = reportLengths(splitReport(revised, REPORT_SPLIT_MARKER));
     console.info(
-      "Report review pass " + pass + ": words " +
+      "Report length pass " + pass + ": words " +
         [before.narrative, before.constraint, before.counterBelief].join("/") + " -> " +
         [after.narrative, after.constraint, after.counterBelief].join("/"),
     );

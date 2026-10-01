@@ -1,9 +1,13 @@
 // Length pass over a generated report. The first draft reliably runs past the
 // report prompt's word limits, and prompt wording alone did not fix that in
-// live testing, so when a part is over, the server measures it and sends the
-// draft back to be cut. This pass only shortens. It does not see the
-// conversation, check facts, or soften conclusions; keeping details accurate
-// is the report prompt's job.
+// live testing, so when a part is over, the server asks the model which whole
+// sentences to delete.
+//
+// The model never writes report text in this pass. The code numbers the
+// draft's sentences, the model replies with numbers to delete, and the code
+// rebuilds the report from the remaining sentences, word for word and in their
+// original order. So a cut can remove a sentence but can never move, merge,
+// or reword one. Keeping details accurate is the report prompt's job.
 //
 // Pure module (no imports besides types) so the tests can load it directly.
 
@@ -11,9 +15,6 @@ import type { Domain } from "./domains";
 
 export const NARRATIVE_MAX_WORDS = 260;
 export const SECTION_MAX_WORDS = 75;
-// The reviser is asked to aim below the hard limit so small overshoots still pass.
-const NARRATIVE_TARGET_WORDS = 230;
-const SECTION_TARGET_WORDS = 65;
 
 export const CONSTRAINT_PREFIX = "Your subconscious internal constraint is:";
 export const COUNTER_PREFIX = "The counter belief is:";
@@ -24,6 +25,20 @@ export interface ReportParts {
   constraint: string;
   counterBelief: string;
 }
+
+export type PartName = keyof ReportParts;
+
+const PART_ORDER: PartName[] = ["narrative", "constraint", "counterBelief"];
+const PART_LABEL: Record<PartName, string> = {
+  narrative: "Narrative",
+  constraint: "Constraint section",
+  counterBelief: "Counter belief section",
+};
+const PART_LIMIT: Record<PartName, number> = {
+  narrative: NARRATIVE_MAX_WORDS,
+  constraint: SECTION_MAX_WORDS,
+  counterBelief: SECTION_MAX_WORDS,
+};
 
 export function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
@@ -37,9 +52,12 @@ export function reportLengths(r: ReportParts) {
   };
 }
 
+function isPartOver(r: ReportParts, part: PartName): boolean {
+  return countWords(r[part]) > PART_LIMIT[part];
+}
+
 export function isOverLimits(r: ReportParts): boolean {
-  const l = reportLengths(r);
-  return l.narrative > NARRATIVE_MAX_WORDS || l.constraint > SECTION_MAX_WORDS || l.counterBelief > SECTION_MAX_WORDS;
+  return PART_ORDER.some((p) => isPartOver(r, p));
 }
 
 /** True when the text has the three parts, split correctly, with the required openings. */
@@ -53,46 +71,112 @@ export function isWellFormed(raw: string): boolean {
   );
 }
 
-/** Pulls the corrected profile out of the reviewer's reply, or null if the block is missing. */
-export function extractProfile(reply: string): string | null {
-  const m = reply.match(/<profile>([\s\S]*?)<\/profile>/);
-  return m ? m[1].trim() : null;
+/** Splits a paragraph into sentences without changing any character of them. */
+export function splitSentences(paragraph: string): string[] {
+  return paragraph
+    .trim()
+    .split(/(?<=[.!?]["'”’)]?)\s+(?=\S)/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
-export function buildReviewSystem(d: Domain): string {
-  return "You are shortening a " + d.reportTitle + " profile that is over its word limits. Your only job is to cut. Do not rewrite it, soften it, hedge it, or change what it says. Keep its voice, its second person address, its paragraph order, its conclusions exactly as confident as they are, and its wording wherever you are not cutting.\n\n"
-  + "Never use any dash character in anything you write, not a hyphen used as a pause, not two hyphens together, not an em dash or en dash. Use a period or a comma instead.\n\n"
-  + "The narrative must be " + NARRATIVE_MAX_WORDS + " words or fewer and each of the two final sections must be " + SECTION_MAX_WORDS + " words or fewer. These are hard limits. You will be told the current word counts. When a part is over, aim for about " + NARRATIVE_TARGET_WORDS + " words for the narrative and about " + SECTION_TARGET_WORDS + " for a final section, and leave parts that are within their limit unchanged. Cut repetition, restatement, and secondary detail first. Never cut the verbal programming, the anchoring incident, the mechanism with its evidence, where they stand today, or the one shift, and never cut the concrete action in the counter belief section. Never add a word, detail, number, or idea that is not already in the draft.\n\n"
-  + "Keep the exact structure. The narrative stays as plain paragraphs with no headers, labels, asterisks, or bullets. Then the marker [SPLIT] on its own line, then the section that starts with the exact words " + CONSTRAINT_PREFIX + " and then the marker [SPLIT] on its own line, then the section that starts with the exact words " + COUNTER_PREFIX + " If the draft uses the word architecture, keep it. Do not add a closing line, a note about your edits, or a question.\n\n"
-  + "Use this exact output format. First, inside <issues> and </issues>, list what you will cut, one short line each. Then, inside <profile> and </profile>, write the full shortened profile, starting with its first word and ending with the last word of the counter belief section. Write nothing outside those two blocks.";
+export interface Sentence {
+  id: number;
+  part: PartName;
+  paragraph: number;
+  text: string;
+  /** Sentences the code will never delete. */
+  locked: boolean;
+}
+
+/** Numbers every sentence of the report, part by part and paragraph by paragraph. */
+export function numberSentences(r: ReportParts): Sentence[] {
+  const out: Sentence[] = [];
+  for (const part of PART_ORDER) {
+    const paragraphs = r[part].split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+    paragraphs.forEach((para, pi) => {
+      for (const text of splitSentences(para)) {
+        const isOpening = part !== "narrative" && out.every((s) => s.part !== part);
+        out.push({
+          id: out.length + 1,
+          part,
+          paragraph: pi,
+          text,
+          // The opening sentence of each final section carries its required
+          // first words, and the prompt asks for "architecture" when it fits.
+          locked: isOpening || /\barchitecture\b/i.test(text),
+        });
+      }
+    });
+  }
+  return out;
 }
 
 /**
- * When the narrative is over its limit, gives each paragraph a word budget in
- * proportion to its current length. The model cuts far more reliably to
- * "this paragraph, 60 words" than to a total.
+ * True when a cut went much further than needed: any part that was cut now
+ * sits under half its limit. Such a pass is discarded.
  */
-export function paragraphBudgets(narrative: string): string {
-  const paras = narrative.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
-  const total = countWords(narrative);
-  if (total <= NARRATIVE_MAX_WORDS) return "";
-  const lines = paras.map((p, i) => {
-    const n = countWords(p);
-    const target = Math.max(15, Math.floor((n / total) * NARRATIVE_TARGET_WORDS));
-    return "Paragraph " + (i + 1) + ": " + n + " words now, cut to " + target + " or fewer.";
-  });
-  return "\nNARRATIVE PARAGRAPH BUDGETS\n" + lines.join("\n") + "\n";
+export function isOvercut(before: ReportParts, after: ReportParts): boolean {
+  return PART_ORDER.some(
+    (p) => after[p] !== before[p] && countWords(after[p]) < PART_LIMIT[p] / 2,
+  );
 }
 
-export function buildReviewInput(draft: string, r: ReportParts): string {
-  const l = reportLengths(r);
-  const status = (n: number, max: number, target: number) =>
-    n + " words, limit " + max + (n > max ? ", OVER, cut to about " + target : ", within limit");
-  return "DRAFT PROFILE\n\n" + draft
-    + "\n\nCURRENT WORD COUNTS\n"
-    + "Narrative: " + status(l.narrative, NARRATIVE_MAX_WORDS, NARRATIVE_TARGET_WORDS) + "\n"
-    + "Constraint section: " + status(l.constraint, SECTION_MAX_WORDS, SECTION_TARGET_WORDS) + "\n"
-    + "Counter belief section: " + status(l.counterBelief, SECTION_MAX_WORDS, SECTION_TARGET_WORDS) + "\n"
-    + paragraphBudgets(r.narrative)
-    + "\nReturn the shortened profile.";
+/** Reads the sentence numbers out of the model's reply. */
+export function parseDeletions(reply: string): number[] {
+  const m = reply.match(/<delete>([\s\S]*?)<\/delete>/);
+  if (!m) return [];
+  return [...new Set((m[1].match(/\d+/g) ?? []).map(Number))];
+}
+
+/**
+ * Rebuilds the report from the kept sentences, in their original order and
+ * paragraphs. Requested deletions are ignored when the sentence is locked, its
+ * part is within its limit, or deleting it would empty its part.
+ */
+export function applyDeletions(sentences: Sentence[], requested: number[], current: ReportParts): string {
+  const del = new Set(
+    requested.filter((id) => {
+      const s = sentences.find((x) => x.id === id);
+      return s && !s.locked && isPartOver(current, s.part);
+    }),
+  );
+  for (const part of PART_ORDER) {
+    const inPart = sentences.filter((s) => s.part === part);
+    if (inPart.every((s) => del.has(s.id))) inPart.forEach((s) => del.delete(s.id));
+  }
+  const kept = sentences.filter((s) => !del.has(s.id));
+  const rebuilt = PART_ORDER.map((part) => {
+    const paragraphs: string[][] = [];
+    for (const s of kept.filter((x) => x.part === part)) (paragraphs[s.paragraph] ??= []).push(s.text);
+    return paragraphs.filter(Boolean).map((p) => p.join(" ")).join("\n\n");
+  });
+  return rebuilt.join("\n\n" + SPLIT + "\n\n");
+}
+
+export function buildCutSystem(d: Domain): string {
+  return "You are shortening a " + d.reportTitle + " profile that is over its word limits. You cannot rewrite anything. The profile has been split into numbered sentences, and the only thing you can do is choose whole sentences to delete. Every sentence you keep stays word for word, in its original order.\n\n"
+  + "The narrative must be " + NARRATIVE_MAX_WORDS + " words or fewer and each of the two final sections must be " + SECTION_MAX_WORDS + " words or fewer. Delete as few sentences as possible to bring each part marked OVER under its limit, and only delete from parts marked OVER. Each sentence shows its word count so you can check the totals.\n\n"
+  + "Prefer sentences that repeat or restate something said elsewhere, or that add secondary detail. Do not delete a sentence that a kept sentence depends on to make sense, for example one that a later sentence points back to with words like that, this, it, or the same. Do not delete a sentence if that would make a kept sentence next to it read as being about something else. Never delete the verbal programming, the anchoring incident, the core of the mechanism, or the concrete action in the counter belief section. Avoid deleting every sentence of a paragraph. Sentences marked LOCKED cannot be deleted.\n\n"
+  + "Use this exact output format. First, inside <notes> and </notes>, write at most ten short lines: the sentences you will delete, each with its word count and the reason it is safe to delete, then the running total, and check that each OVER part ends up under its limit. Then, on its own line, list the sentence numbers to delete, like this: <delete>3, 7, 12</delete>. Write nothing else.";
+}
+
+export function buildCutInput(sentences: Sentence[], r: ReportParts): string {
+  const lines: string[] = [];
+  for (const part of PART_ORDER) {
+    const n = countWords(r[part]);
+    const limit = PART_LIMIT[part];
+    lines.push(
+      "",
+      PART_LABEL[part].toUpperCase() + ": " + n + " words, limit " + limit +
+        (n > limit ? ", OVER, delete at least " + (n - limit) + " words" : ", within limit, do not delete from this part"),
+    );
+    let lastPara = -1;
+    for (const s of sentences.filter((x) => x.part === part)) {
+      if (part === "narrative" && s.paragraph !== lastPara) lines.push("(paragraph " + (s.paragraph + 1) + ")");
+      lastPara = s.paragraph;
+      lines.push("[" + s.id + "] (" + countWords(s.text) + " words" + (s.locked ? ", LOCKED" : "") + ") " + s.text);
+    }
+  }
+  return "NUMBERED PROFILE" + lines.join("\n") + "\n\nReply with the sentences to delete.";
 }

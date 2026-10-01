@@ -55,7 +55,7 @@ Prompt changes made after porting (applied to both `prompts.ts` and the referenc
 - The chat prompt forbids assuming anything unstated (gender, relationship status, what happened between people, what others meant or felt) and treats anything the person says they don't know as unknown.
 - The report call also gets today's date, so relative references like "last year" are not turned into a guessed year.
 
-Length pass (`src/lib/diagnostic/review.ts`): the first draft reliably runs past the word limits. When a part is over, the server sends the draft back with its measured word counts and per-paragraph budgets to be cut, and repeats while still over (at most 3 passes). This pass only shortens. It does not see the conversation, check facts or soften conclusions. A malformed result is discarded, and if the call fails the draft is kept. The first draft is saved in `reportDraft` for comparison.
+Length pass (`src/lib/diagnostic/review.ts`): the first draft reliably runs past the word limits. When a part is over, the code splits the draft into numbered sentences and asks the model only which sentence numbers to delete. The code then rebuilds the report from the kept sentences, word for word and in their original order, so a cut can remove a sentence but never move, merge or reword one. The code also ignores deletions from parts within their limit, keeps each final section's opening sentence and the sentence containing "architecture", never empties a part, and discards a pass that cuts any part below half its limit. Passes repeat while a part is still over (at most 3). If the call fails, the draft is kept. The first draft is saved in `reportDraft` for comparison.
 
 Other differences from the prototype, all outside the prompts:
 
