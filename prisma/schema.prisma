@@ -44,6 +44,7 @@ model Diagnostic {
 
   reportRaw     String? // unparsed model output, kept for safety
   reportDraft   String? // first draft before the review pass
+  reportChecks  Json? // denial check: audit and violations per attempt
   narrative     String?
   constraint    String?
   counterBelief String?

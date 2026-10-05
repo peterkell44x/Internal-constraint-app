@@ -24,6 +24,22 @@ import {
   parseDeletions,
   reportLengths,
 } from "./review";
+import {
+  AUDIT_SCHEMA,
+  type Attempt,
+  type Audit,
+  buildAuditInput,
+  buildAuditSystem,
+  buildCheckInput,
+  buildCheckSystem,
+  buildRetryNote,
+  CHECK_SCHEMA,
+  formatTranscript,
+  parseAudit,
+  parseViolations,
+  pickBest,
+  type Violation,
+} from "./denial";
 import { splitReadyMarker, splitReport, stripDashes } from "./text";
 
 // Server-side port of the prototype's diagnostic engine. The model call
@@ -153,15 +169,15 @@ function todayLine(): string {
 const CEILING_REPORT_NOTE =
   "\n\nThis conversation reached its answer limit before the connection between the origin belief and their current behavior was tested and confirmed. Build the narrative, the mechanism, the constraint, and the counter belief only from what they actually stated or confirmed. If no specific belief and mechanism was confirmed, state the constraint at the level the conversation actually supports, even if that makes it less specific, rather than constructing a sharper one. This takes priority over the instructions above to go deeper, to build a case, and to make the constraint sting. Do not mention the answer limit or that the conversation ended early.";
 
-/** Mirrors the prototype's report button handler, followed by the length pass. */
-export async function generateReport(
+/**
+ * Writes one report: a draft, then the length pass. Returns the draft and the
+ * shortened version.
+ */
+async function draftAndCut(
   domain: DomainKey,
-  history: ChatMessage[],
-  userTurns: number,
-): Promise<Report> {
-  const reportMsgs: ChatMessage[] = history.concat([{ role: "user", content: REPORT_REQUEST_MESSAGE }]);
-  const hitCeiling = userTurns >= HARD_CEILING;
-  const system = buildReportSystem(DOMAINS[domain]) + todayLine() + (hitCeiling ? CEILING_REPORT_NOTE : "");
+  reportMsgs: ChatMessage[],
+  system: string,
+): Promise<{ draft: string; final: string }> {
   const draft = await callClaude(reportMsgs, system, REPORT_MAX_TOKENS);
 
   let current = draft;
@@ -201,6 +217,98 @@ export async function generateReport(
     );
     current = revised;
   }
+  return { draft, final: current };
+}
 
-  return { raw: current, draft, ...splitReport(current, REPORT_SPLIT_MARKER) };
+// Calls that return JSON matching a schema. No dash stripping: the output is
+// data for the code, never shown to the person.
+async function callJSON(system: string, input: string, schema: Record<string, unknown>): Promise<string> {
+  const response = await getClient().messages.create({
+    model: MODEL,
+    max_tokens: CHECK_MAX_TOKENS,
+    system,
+    messages: [{ role: "user", content: input }],
+    output_config: { format: { type: "json_schema", schema } },
+  });
+  return response.content.map((b) => (b.type === "text" ? b.text : "")).join("");
+}
+
+/** Lists what the person rejected and confirmed, or null if the call fails. */
+async function auditConversation(transcript: string): Promise<Audit | null> {
+  try {
+    return parseAudit(await callJSON(buildAuditSystem(), buildAuditInput(transcript), AUDIT_SCHEMA));
+  } catch (e) {
+    console.error("Report audit failed; the report will ship unchecked", e);
+    return null;
+  }
+}
+
+/** Lists the report's violations of the audit, or null if the call fails. */
+async function checkReport(transcript: string, audit: Audit, report: string): Promise<Violation[] | null> {
+  try {
+    return parseViolations(await callJSON(buildCheckSystem(), buildCheckInput(transcript, audit, report), CHECK_SCHEMA));
+  } catch (e) {
+    console.error("Report check failed", e);
+    return null;
+  }
+}
+
+// The audit and check replies are short lists.
+const CHECK_MAX_TOKENS = 4000;
+
+// Regenerations after the first attempt when the check finds violations.
+const MAX_DENIAL_RETRIES = 2;
+
+/** What the denial check saw, stored with the report for tuning. */
+export interface ReportChecks {
+  audit: Audit | null;
+  attempts: { violations: Violation[] | null }[];
+  shipped: number; // index into attempts
+}
+
+/**
+ * Mirrors the prototype's report button handler, followed by the length pass
+ * and the denial check.
+ */
+export async function generateReport(
+  domain: DomainKey,
+  history: ChatMessage[],
+  userTurns: number,
+): Promise<Report & { checks: ReportChecks }> {
+  const reportMsgs: ChatMessage[] = history.concat([{ role: "user", content: REPORT_REQUEST_MESSAGE }]);
+  const hitCeiling = userTurns >= HARD_CEILING;
+  const system = buildReportSystem(DOMAINS[domain]) + todayLine() + (hitCeiling ? CEILING_REPORT_NOTE : "");
+  const transcript = formatTranscript(history, BEGIN_MESSAGE);
+
+  // The audit only needs the conversation, so it runs alongside the first draft.
+  const [first, audit] = await Promise.all([draftAndCut(domain, reportMsgs, system), auditConversation(transcript)]);
+
+  const attempts: Attempt<{ draft: string; final: string }>[] = [];
+  if (!audit) {
+    attempts.push({ value: first, violations: null });
+  } else {
+    let value = first;
+    const flagged: Violation[] = [];
+    for (let i = 0; i <= MAX_DENIAL_RETRIES; i++) {
+      if (i > 0) value = await draftAndCut(domain, reportMsgs, system + buildRetryNote(flagged));
+      const violations = await checkReport(transcript, audit, value.final);
+      attempts.push({ value, violations });
+      console.info(
+        "Report denial check attempt " + (i + 1) + ": " +
+          (violations === null ? "check failed" : violations.length + " violation(s)"),
+      );
+      // Stop when clean, or when the check can't run (nothing to retry against).
+      if (violations === null || violations.length === 0) break;
+      flagged.push(...violations);
+    }
+  }
+
+  const best = pickBest(attempts);
+  const checks: ReportChecks = {
+    audit,
+    attempts: attempts.map((a) => ({ violations: a.violations })),
+    shipped: attempts.indexOf(best),
+  };
+  const { draft, final } = best.value;
+  return { raw: final, draft, ...splitReport(final, REPORT_SPLIT_MARKER), checks };
 }

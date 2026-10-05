@@ -1,3 +1,4 @@
+import type { Prisma } from "@/generated/prisma/client";
 import { jsonError, userOr401 } from "@/lib/api";
 import { describeError, generateReport } from "@/lib/diagnostic/engine";
 import { findOwnedDiagnostic, historyOf, saveIfUnchanged, toView } from "@/lib/diagnostic/store";
@@ -23,6 +24,7 @@ export async function POST(_req: Request, ctx: RouteContext<"/api/diagnostics/[i
     status: "completed",
     reportRaw: report.raw,
     reportDraft: report.draft,
+    reportChecks: report.checks as unknown as Prisma.InputJsonValue,
     narrative: report.narrative,
     constraint: report.constraint,
     counterBelief: report.counterBelief,
