@@ -14,7 +14,7 @@
 // Pure module (no imports besides types) so the tests can load it directly.
 
 export interface Audit {
-  rejected: { interpretation: string; quote: string }[];
+  rejected: { interpretation: string; quote: string; answer?: "no" | "correction" | "uncertain" }[];
   confirmed: { link: string; quote: string }[];
 }
 
@@ -46,8 +46,12 @@ export const AUDIT_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["interpretation", "quote"],
-        properties: { interpretation: str, quote: str },
+        required: ["interpretation", "quote", "answer"],
+        properties: {
+          interpretation: str,
+          quote: str,
+          answer: { type: "string", enum: ["no", "correction", "uncertain"] },
+        },
       },
     },
     confirmed: {
@@ -85,8 +89,9 @@ export const CHECK_SCHEMA = {
 
 export function buildAuditSystem(): string {
   return "You are auditing a diagnostic conversation between a GUIDE and a PERSON. Nothing you write is shown to the person. Produce two lists.\n\n"
-  + "rejected: every interpretation, explanation, or link that was put to the person, by the guide or as a possibility, and that the person rejected, denied, corrected, or answered no to. For each, give the interpretation in plain words and the person's exact words that rejected it.\n\n"
+  + "rejected: every interpretation, explanation, or link that was put to the person, by the guide or as a possibility, and that the person rejected, denied, corrected, or answered no to. For each, give the interpretation in plain words, the person's exact words, and label their answer: no for a clear no or denial, correction for when they gave a different answer instead, or uncertain for idk, not sure, maybe, or not knowing.\n\n"
   + "confirmed: every link between two things that the person stated themselves or clearly agreed to when it was put to them. A link can be between something from their past and something they do now, between a feeling and a behavior, between two behaviors, or a reason they gave for something they did. For each, give the link in plain words and the person's exact words. Agreement must be clear, such as yes, that is it, or saying it in their own words. Silence, idk, changing the subject, or answering a different question is not agreement. A link only the guide stated is not confirmed.\n\n"
+  + "Uncertainty is neither. If the person answered idk, not sure, maybe, or said they do not know, do not put it on either list. Only a clear no, a denial, or a correction is a rejection, and only clear agreement or their own statement is a confirmation.\n\n"
   + "Be literal and strict. Do not infer what they meant. Either list can be empty.";
 }
 
@@ -97,7 +102,7 @@ export function buildAuditInput(transcript: string): string {
 export function buildCheckSystem(): string {
   return "You are fact checking a written profile against the diagnostic conversation it was written from, between a GUIDE and a PERSON. You receive the conversation, an audit listing the interpretations the person rejected and the links the person confirmed, and the profile. Nothing you write is shown to the person.\n\n"
   + "List a violation for each place where the profile does one of these:\n"
-  + "rejected: states, implies, or rewords anything on the rejected list.\n"
+  + "rejected: states, implies, or rewords anything on the rejected list. Only items on that list count as rejected; a question the person answered with idk or uncertainty is not a rejection.\n"
   + "unconfirmed_link: presents a link, cause, pattern, or same move between separate things the person said, or turns one thing they said or did into a general pattern of how they operate, when that link is not on the confirmed list and the person did not state it themselves.\n"
   + "not_said: states as fact something about the person or anyone in their life that the person never said, such as an event, number, feeling, motive, or a consequence that rests on a fact about their situation they never stated.\n\n"
   + "Do not flag: things the person said, links on the confirmed list and how they play out, what a single thing the person said means in their own framing, the suggested action in the counter belief section, or wording and style. When in doubt whether the person said something, check the conversation.\n\n"
@@ -141,7 +146,11 @@ export function parseAudit(text: string): Audit | null {
   try {
     const j = JSON.parse(text);
     if (!Array.isArray(j?.rejected) || !Array.isArray(j?.confirmed)) return null;
-    return { rejected: j.rejected, confirmed: j.confirmed };
+    // An uncertain answer (idk, not sure) is not a rejection. The model labels
+    // each answer and the code drops the uncertain ones, since an instruction
+    // alone to leave them out was ignored in testing.
+    const rejected = j.rejected.filter((r: { answer?: string }) => r.answer !== "uncertain");
+    return { rejected, confirmed: j.confirmed };
   } catch {
     return null;
   }

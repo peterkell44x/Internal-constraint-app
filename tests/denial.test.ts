@@ -68,3 +68,22 @@ test("schemas are strict objects, as structured output requires", () => {
     assert.ok(s.required.length > 0);
   }
 });
+
+test("audit and check prompts treat idk as neither rejected nor confirmed", async () => {
+  const { buildAuditSystem, buildCheckSystem } = await import("../src/lib/diagnostic/denial.ts");
+  assert.match(buildAuditSystem(), /Uncertainty is neither/);
+  assert.match(buildAuditSystem(), /idk, not sure, maybe/);
+  assert.match(buildCheckSystem(), /answered with idk or uncertainty is not a rejection/);
+});
+
+test("parseAudit drops rejected items whose answer was uncertain", () => {
+  const a = parseAudit(JSON.stringify({
+    rejected: [
+      { interpretation: "starting felt risky", quote: "no", answer: "no" },
+      { interpretation: "there is a constraint", quote: "idk", answer: "uncertain" },
+      { interpretation: "others' expectations", quote: "my expectations of myself", answer: "correction" },
+    ],
+    confirmed: [],
+  }));
+  assert.deepEqual(a?.rejected.map((r) => r.interpretation), ["starting felt risky", "others' expectations"]);
+});
