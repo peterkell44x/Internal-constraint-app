@@ -4,14 +4,15 @@ import { test } from "node:test";
 import {
   AUDIT_SCHEMA,
   buildCheckInput,
-  buildRetryNote,
   CHECK_SCHEMA,
   formatTranscript,
+  matchViolations,
   parseAudit,
   parseViolations,
-  pickBest,
   type Violation,
 } from "../src/lib/diagnostic/denial.ts";
+import { applyDeletions, numberSentences } from "../src/lib/diagnostic/review.ts";
+import { splitReport } from "../src/lib/diagnostic/text.ts";
 
 const v = (quote: string, kind: Violation["kind"] = "unconfirmed_link"): Violation => ({ quote, kind, reason: "r" });
 
@@ -36,22 +37,6 @@ test("parseAudit and parseViolations accept the expected shape and reject anythi
   assert.equal(parseAudit('{"rejected":[]}'), null);
   assert.deepEqual(parseViolations('{"violations":[]}'), []);
   assert.equal(parseViolations('{"other":1}'), null);
-});
-
-test("pickBest ships the first clean attempt, else the fewest violations, else the first", () => {
-  assert.equal(pickBest([{ value: 1, violations: [v("a"), v("b")] }, { value: 2, violations: [] }, { value: 3, violations: [] }]).value, 2);
-  assert.equal(pickBest([{ value: 1, violations: [v("a"), v("b")] }, { value: 2, violations: [v("c")] }, { value: 3, violations: [v("d"), v("e")] }]).value, 2);
-  assert.equal(pickBest([{ value: 1, violations: [v("a")] }, { value: 2, violations: [v("b")] }]).value, 1);
-  // A failed check never beats a checked attempt, and with no checks the first ships.
-  assert.equal(pickBest([{ value: 1, violations: null }, { value: 2, violations: [v("a")] }]).value, 2);
-  assert.equal(pickBest([{ value: 1, violations: null }, { value: 2, violations: null }]).value, 1);
-});
-
-test("the retry note lists each flagged claim once", () => {
-  const note = buildRetryNote([v("You stay hidden."), v("you stay hidden. "), v("You never post.", "not_said")]);
-  assert.equal((note.match(/^- /gm) ?? []).length, 2);
-  assert.match(note, /"You stay hidden\."/);
-  assert.match(note, /Do not make these claims or restate them in other words/);
 });
 
 test("check input carries the conversation, the audit lists, and the profile", () => {
@@ -86,4 +71,41 @@ test("parseAudit drops rejected items whose answer was uncertain", () => {
     confirmed: [],
   }));
   assert.deepEqual(a?.rejected.map((r) => r.interpretation), ["starting felt risky", "others' expectations"]);
+});
+
+const report =
+  "Your dad said you would be rich. He worked hard for it.\n\n" +
+  "You kept the dropout secret. That keeps you building in private. You also lose all accountability.\n\n" +
+  "The shift is to say it out loud.\n\n[SPLIT]\n\n" +
+  "Your subconscious internal constraint is: being seen trying is dangerous. This keeps you hidden.\n\n[SPLIT]\n\n" +
+  "The counter belief is: being seen is safe. Tell one person this week.";
+
+test("matchViolations finds partial quotes, multi-sentence quotes, and refuses protected sentences", () => {
+  const s = numberSentences(splitReport(report, "[SPLIT]"));
+  const id = (t: string) => s.find((x) => x.text.startsWith(t))!.id;
+  const { deleteIds, unfixable } = matchViolations(s, [
+    v("lose all accountability"), // part of one sentence
+    v("You kept the dropout secret. That keeps you building in private."), // spans two
+    v("being seen trying is dangerous"), // inside the protected constraint opening
+    v("a sentence that is nowhere in this report at all"), // not found
+  ]);
+  assert.deepEqual(deleteIds.sort(), [id("You kept"), id("That keeps"), id("You also")].sort());
+  assert.deepEqual(unfixable.map((x) => x.quote), ["being seen trying is dangerous", "a sentence that is nowhere in this report at all"]);
+});
+
+test("matchViolations tolerates punctuation, case and trimmed quotes", () => {
+  const s = numberSentences(splitReport(report, "[SPLIT]"));
+  const { deleteIds } = matchViolations(s, [v("YOU ALSO lose all accountability!!"), v("Your dad said you would be rich and then some extra words that are not there")]);
+  assert.equal(deleteIds.length, 2);
+});
+
+test("denial deletions remove only the flagged sentences, from any part, in order", () => {
+  const p = splitReport(report, "[SPLIT]");
+  const s = numberSentences(p);
+  const { deleteIds } = matchViolations(s, [v("That keeps you building in private."), v("This keeps you hidden.")]);
+  const out = splitReport(applyDeletions(s, deleteIds, p, { onlyOverLimit: false }), "[SPLIT]");
+  assert.equal(out.narrative.split("\n\n")[1], "You kept the dropout secret. You also lose all accountability.");
+  assert.equal(out.constraint, "Your subconscious internal constraint is: being seen trying is dangerous.");
+  // With the length pass default, parts within their limit are untouched.
+  assert.equal(splitReport(applyDeletions(s, deleteIds, p), "[SPLIT]").narrative, p.narrative);
 });

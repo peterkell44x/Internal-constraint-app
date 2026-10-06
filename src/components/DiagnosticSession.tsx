@@ -46,7 +46,9 @@ export default function DiagnosticSession({ initial, subtitle, reportTitle }: Pr
 
   const base = "/api/diagnostics/" + view.id;
   const ready = view.status === "ready";
+  const generating = view.status === "generating";
   const completed = view.status === "completed";
+  const [now, setNow] = useState(() => Date.now());
 
   function applyView(next: DiagnosticView) {
     setView(next);
@@ -79,6 +81,31 @@ export default function DiagnosticSession({ initial, subtitle, reportTitle }: Pr
     if (el) el.scrollTop = el.scrollHeight;
   }, [bubbles, thinking]);
 
+  // While the report is being built on the server, check in every few
+  // seconds and tick the elapsed timer. This also picks up a generation that
+  // was already running when the page was opened or reloaded.
+  useEffect(() => {
+    if (!generating || view.generationStale) return;
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(base, { cache: "no-store" });
+        if (!res.ok) return;
+        const next = (await res.json()) as DiagnosticView;
+        if (next.status === "generating" && !next.generationStale) return;
+        applyView(next);
+        if (next.status === "completed") router.refresh();
+      } catch {
+        // A missed check is fine; the next one tries again.
+      }
+    }, 3000);
+    return () => {
+      clearInterval(tick);
+      clearInterval(poll);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generating, view.generationStale, base]);
+
   async function sendMessage() {
     const val = input.trim();
     if (!val || thinking || ready || completed) return;
@@ -97,12 +124,17 @@ export default function DiagnosticSession({ initial, subtitle, reportTitle }: Pr
     }
   }
 
+  // Starts the report on the server. The request returns straight away; the
+  // polling effect above waits for the result.
   async function generateReport() {
+    if (building) return;
     setBuilding(true);
     setReportError(null);
     try {
-      applyView(await post(base + "/report"));
-      router.refresh();
+      const next = await post(base + "/report");
+      setNow(Date.now());
+      applyView(next);
+      if (next.status === "completed") router.refresh();
     } catch (e) {
       setReportError((e as Error).message);
     } finally {
@@ -120,6 +152,9 @@ export default function DiagnosticSession({ initial, subtitle, reportTitle }: Pr
   }
 
   const answers = view.userTurns;
+  const elapsedMs = view.reportStartedAt ? Math.max(0, now - Date.parse(view.reportStartedAt)) : 0;
+  const elapsed = Math.floor(elapsedMs / 60000) + ":" + String(Math.floor(elapsedMs / 1000) % 60).padStart(2, "0");
+  const shownError = reportError ?? (ready ? view.reportError : null);
   const turnCount = answers > 0 ? answers + " answer" + (answers === 1 ? "" : "s") + " so far" : "";
 
   if (completed && view.report) {
@@ -153,7 +188,30 @@ export default function DiagnosticSession({ initial, subtitle, reportTitle }: Pr
         {thinking && <div className="typing">thinking...</div>}
       </div>
 
-      {reportError && <div className="report">{reportError}</div>}
+      {generating && (
+        <div className="building-panel" role="status">
+          {view.generationStale ? (
+            <>
+              <p className="building-title">This is taking much longer than it should.</p>
+              <p className="muted small">Something may have gone wrong while building your report.</p>
+              <button onClick={generateReport} disabled={building} style={{ fontSize: 13 }}>
+                Try again
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="building-title">
+                Building your report <span className="building-timer">{elapsed}</span>
+              </p>
+              <p className="muted small">
+                This usually takes 2 to 4 minutes. You can leave or reload this page; it keeps going.
+              </p>
+            </>
+          )}
+        </div>
+      )}
+
+      {shownError && <div className="report">{shownError}</div>}
 
       <div className="input-row">
         <input
@@ -164,11 +222,21 @@ export default function DiagnosticSession({ initial, subtitle, reportTitle }: Pr
           onKeyDown={(e) => {
             if (e.key === "Enter") void sendMessage();
           }}
-          placeholder={ready ? "Ready. Click Generate profile report below." : "Type your answer..."}
+          placeholder={
+            generating
+              ? "Building your report..."
+              : ready
+              ? "Ready. Click Generate profile report below."
+              : "Type your answer..."
+          }
           autoComplete="off"
-          disabled={ready || startFailed}
+          disabled={ready || generating || startFailed}
         />
-        <button className="primary" onClick={() => void sendMessage()} disabled={ready || thinking || startFailed}>
+        <button
+          className="primary"
+          onClick={() => void sendMessage()}
+          disabled={ready || generating || thinking || startFailed}
+        >
           Send
         </button>
       </div>
@@ -178,7 +246,7 @@ export default function DiagnosticSession({ initial, subtitle, reportTitle }: Pr
           <Link href="/diagnostic/new" className="button small-btn">Switch domain</Link>
           {ready && (
             <button onClick={generateReport} disabled={building} style={{ fontSize: 13 }}>
-              {building ? "Building report..." : "Generate profile report"}
+              {building ? "Starting..." : "Generate profile report"}
             </button>
           )}
         </div>

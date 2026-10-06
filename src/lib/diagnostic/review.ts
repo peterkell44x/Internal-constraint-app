@@ -7,7 +7,8 @@
 // draft's sentences, the model replies with numbers to delete, and the code
 // rebuilds the report from the remaining sentences, word for word and in their
 // original order. So a cut can remove a sentence but can never move, merge,
-// or reword one. Keeping details accurate is the report prompt's job.
+// or reword one. The denial check (denial.ts) reuses the same numbering and
+// deletion, so its cuts are delete-only too.
 //
 // Pure module (no imports besides types) so the tests can load it directly.
 
@@ -144,14 +145,20 @@ export function parseDeletions(reply: string): number[] {
 
 /**
  * Rebuilds the report from the kept sentences, in their original order and
- * paragraphs. Requested deletions are ignored when the sentence is locked, its
- * part is within its limit, or deleting it would empty its part.
+ * paragraphs. Requested deletions are ignored when the sentence is locked,
+ * when deleting it would empty its part, and (for the length pass, the
+ * default) when its part is within its word limit.
  */
-export function applyDeletions(sentences: Sentence[], requested: number[], current: ReportParts): string {
+export function applyDeletions(
+  sentences: Sentence[],
+  requested: number[],
+  current: ReportParts,
+  { onlyOverLimit = true }: { onlyOverLimit?: boolean } = {},
+): string {
   const del = new Set(
     requested.filter((id) => {
       const s = sentences.find((x) => x.id === id);
-      return s && !s.locked && isPartOver(current, s.part);
+      return s && !s.locked && (!onlyOverLimit || isPartOver(current, s.part));
     }),
   );
   for (const part of PART_ORDER) {

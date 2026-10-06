@@ -45,7 +45,9 @@ export default async function DashboardPage() {
                     <span className="muted">{dateFmt.format(d.createdAt)}</span>
                   </div>
                   <p>
-                    {d.status === "ready"
+                    {d.status === "generating"
+                      ? "Building your profile report."
+                      : d.status === "ready"
                       ? "Ready to generate your profile report."
                       : d.userTurns + " answer" + (d.userTurns === 1 ? "" : "s") + " so far. Pick up where you left off."}
                   </p>

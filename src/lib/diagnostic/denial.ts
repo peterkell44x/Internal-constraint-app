@@ -5,13 +5,16 @@
 //
 // 1. An audit reads only the conversation and lists what the person rejected
 //    and which links they stated or confirmed. It runs once per report.
-// 2. A check compares a finished report against that audit and lists each
+// 2. A check compares the finished report against that audit and lists each
 //    violation, quoting the report.
 //
-// The engine regenerates the report when the check finds violations, and
-// ships the attempt with the fewest if none comes back clean.
+// The flagged sentences are then deleted, delete-only like the length pass:
+// the report is never rewritten, and protected sentences are never removed.
+// A violation inside a protected sentence is recorded but stays.
 //
 // Pure module (no imports besides types) so the tests can load it directly.
+
+import type { Sentence } from "./review";
 
 export interface Audit {
   rejected: { interpretation: string; quote: string; answer?: "no" | "correction" | "uncertain" }[];
@@ -123,24 +126,6 @@ export function buildCheckInput(transcript: string, audit: Audit, report: string
   return "CONVERSATION\n\n" + transcript + "\n\nAUDIT\n\n" + formatAudit(audit) + "\n\nPROFILE\n\n" + report;
 }
 
-/**
- * Appended to the report prompt when regenerating. Lists every claim earlier
- * attempts were rejected for, so a retry does not repeat one of them.
- */
-export function buildRetryNote(violations: Violation[]): string {
-  const seen = new Set<string>();
-  const lines: string[] = [];
-  for (const v of violations) {
-    const key = v.quote.trim().toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    lines.push("- \"" + v.quote.trim() + "\" (" + v.reason.trim() + ")");
-  }
-  return "\n\nAn earlier draft of this profile failed a fact check because it contained these claims, which the person rejected or never confirmed:\n"
-    + lines.join("\n")
-    + "\n\nWrite the profile again from the start. Do not make these claims or restate them in other words. Where the conversation does not support a sharper claim, say less.";
-}
-
 /** Parses a structured reply, or returns null if it is not the expected shape. */
 export function parseAudit(text: string): Audit | null {
   try {
@@ -165,16 +150,56 @@ export function parseViolations(text: string): Violation[] | null {
   }
 }
 
-export interface Attempt<T> {
-  value: T;
-  violations: Violation[] | null; // null when the check itself failed
+/** Lowercase words only, so quotes match regardless of punctuation and spacing. */
+function normalize(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function words(text: string): string[] {
+  return text.split(" ").filter(Boolean);
+}
+
+export interface ViolationMatch {
+  /** Unprotected sentences to delete. */
+  deleteIds: number[];
+  /** Violations that can't be fixed by deletion: in a protected sentence, or not found. */
+  unfixable: Violation[];
 }
 
 /**
- * The attempt to ship: the first with no violations, otherwise the one with
- * the fewest. Unchecked attempts count as worst; ties go to the earliest.
+ * Finds the sentences each violation quotes. A quote can be part of one
+ * sentence or span several. Protected sentences are never selected; a
+ * violation that touches one, or whose quote can't be found, is unfixable.
  */
-export function pickBest<T>(attempts: Attempt<T>[]): Attempt<T> {
-  const score = (a: Attempt<T>) => (a.violations === null ? Infinity : a.violations.length);
-  return attempts.reduce((best, a) => (score(a) < score(best) ? a : best));
+export function matchViolations(sentences: Sentence[], violations: Violation[]): ViolationMatch {
+  const deleteIds = new Set<number>();
+  const unfixable: Violation[] = [];
+  const norm = sentences.map((s) => ({ s, t: normalize(s.text) }));
+  for (const v of violations) {
+    const q = normalize(v.quote);
+    if (!q) {
+      unfixable.push(v);
+      continue;
+    }
+    // The quote is inside a sentence, or a whole sentence (of a few words or
+    // more) is inside the quote.
+    let hits = norm.filter(({ t }) => t.includes(q) || (words(t).length >= 4 && q.includes(t)));
+    if (hits.length === 0) {
+      // Fall back to the quote's opening or closing words, for quotes that
+      // were trimmed or slightly reworded.
+      const qw = words(q);
+      if (qw.length >= 8) {
+        const head = qw.slice(0, 8).join(" ");
+        const tail = qw.slice(-8).join(" ");
+        hits = norm.filter(({ t }) => t.includes(head) || t.includes(tail));
+      }
+    }
+    if (hits.length === 0) {
+      unfixable.push(v);
+      continue;
+    }
+    if (hits.some(({ s }) => s.locked)) unfixable.push(v);
+    for (const { s } of hits) if (!s.locked) deleteIds.add(s.id);
+  }
+  return { deleteIds: [...deleteIds], unfixable };
 }

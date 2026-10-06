@@ -7,7 +7,18 @@ import { isDomainKey, type DomainKey } from "./domains";
 import type { ChatMessage } from "./engine";
 import { BEGIN_MESSAGE } from "./prompts";
 
-export type DiagnosticStatus = "in_progress" | "ready" | "completed";
+export type DiagnosticStatus = "in_progress" | "ready" | "generating" | "completed";
+
+// A generation running longer than this is treated as stuck (for example the
+// server restarted mid-way), and can be started again.
+export const STALE_GENERATION_MS = 15 * 60 * 1000;
+
+export function isStaleGeneration(d: Pick<Diagnostic, "status" | "reportStartedAt">): boolean {
+  return (
+    d.status === "generating" &&
+    (!d.reportStartedAt || Date.now() - d.reportStartedAt.getTime() > STALE_GENERATION_MS)
+  );
+}
 
 /** What the browser is allowed to see of a diagnostic. */
 export interface DiagnosticView {
@@ -20,6 +31,12 @@ export interface DiagnosticView {
   report: { narrative: string; constraint: string; counterBelief: string } | null;
   createdAt: string;
   completedAt: string | null;
+  /** When the background report generation started, while generating. */
+  reportStartedAt: string | null;
+  /** True when a generation has run too long and can be started again. */
+  generationStale: boolean;
+  /** Why the last report attempt failed, if it did. */
+  reportError: string | null;
 }
 
 export function historyOf(d: Diagnostic): ChatMessage[] {
@@ -46,6 +63,9 @@ export function toView(d: Diagnostic): DiagnosticView {
         : null,
     createdAt: d.createdAt.toISOString(),
     completedAt: d.completedAt ? d.completedAt.toISOString() : null,
+    reportStartedAt: d.status === "generating" && d.reportStartedAt ? d.reportStartedAt.toISOString() : null,
+    generationStale: isStaleGeneration(d),
+    reportError: d.reportError ?? null,
   };
 }
 

@@ -26,18 +26,16 @@ import {
 } from "./review";
 import {
   AUDIT_SCHEMA,
-  type Attempt,
   type Audit,
   buildAuditInput,
   buildAuditSystem,
   buildCheckInput,
   buildCheckSystem,
-  buildRetryNote,
   CHECK_SCHEMA,
   formatTranscript,
+  matchViolations,
   parseAudit,
   parseViolations,
-  pickBest,
   type Violation,
 } from "./denial";
 import { splitReadyMarker, splitReport, stripDashes } from "./text";
@@ -177,6 +175,7 @@ async function draftAndCut(
   domain: DomainKey,
   reportMsgs: ChatMessage[],
   system: string,
+  deadline: number,
 ): Promise<{ draft: string; final: string }> {
   const draft = await callClaude(reportMsgs, system, REPORT_MAX_TOKENS);
 
@@ -184,6 +183,10 @@ async function draftAndCut(
   for (let pass = 1; pass <= MAX_CUT_PASSES; pass++) {
     const parts = splitReport(current, REPORT_SPLIT_MARKER);
     if (!isOverLimits(parts)) break;
+    if (Date.now() > deadline) {
+      console.warn("Report time budget reached; skipping further length passes");
+      break;
+    }
     const sentences = numberSentences(parts);
     let reply: string;
     try {
@@ -256,59 +259,76 @@ async function checkReport(transcript: string, audit: Audit, report: string): Pr
 // The audit and check replies are short lists.
 const CHECK_MAX_TOKENS = 4000;
 
-// Regenerations after the first attempt when the check finds violations.
-const MAX_DENIAL_RETRIES = 2;
+// Check-and-delete rounds. Each checks the current report and deletes the
+// sentences it flags; later rounds catch anything the first check missed.
+const MAX_CHECK_ROUNDS = 3;
 
-/** What the denial check saw, stored with the report for tuning. */
+// After this long, no new length pass or check round starts and the report
+// ships as it stands, keeping generation well inside hosting time limits.
+const REPORT_TIME_BUDGET_MS = 4 * 60 * 1000;
+
+/** What the denial check saw and did, stored with the report for tuning. */
 export interface ReportChecks {
   audit: Audit | null;
-  attempts: { violations: Violation[] | null }[];
-  shipped: number; // index into attempts
+  rounds: { violations: Violation[] | null; deleted: string[]; unfixable: Violation[] }[];
+  timedOut: boolean;
+  ms: number;
 }
 
 /**
  * Mirrors the prototype's report button handler, followed by the length pass
- * and the denial check.
+ * and the delete-only denial check.
  */
 export async function generateReport(
   domain: DomainKey,
   history: ChatMessage[],
   userTurns: number,
 ): Promise<Report & { checks: ReportChecks }> {
+  const started = Date.now();
+  const deadline = started + REPORT_TIME_BUDGET_MS;
   const reportMsgs: ChatMessage[] = history.concat([{ role: "user", content: REPORT_REQUEST_MESSAGE }]);
   const hitCeiling = userTurns >= HARD_CEILING;
   const system = buildReportSystem(DOMAINS[domain]) + todayLine() + (hitCeiling ? CEILING_REPORT_NOTE : "");
   const transcript = formatTranscript(history, BEGIN_MESSAGE);
 
-  // The audit only needs the conversation, so it runs alongside the first draft.
-  const [first, audit] = await Promise.all([draftAndCut(domain, reportMsgs, system), auditConversation(transcript)]);
+  // The audit only needs the conversation, so it runs alongside the draft.
+  const [{ draft, final }, audit] = await Promise.all([
+    draftAndCut(domain, reportMsgs, system, deadline),
+    auditConversation(transcript),
+  ]);
 
-  const attempts: Attempt<{ draft: string; final: string }>[] = [];
-  if (!audit) {
-    attempts.push({ value: first, violations: null });
-  } else {
-    let value = first;
-    const flagged: Violation[] = [];
-    for (let i = 0; i <= MAX_DENIAL_RETRIES; i++) {
-      if (i > 0) value = await draftAndCut(domain, reportMsgs, system + buildRetryNote(flagged));
-      const violations = await checkReport(transcript, audit, value.final);
-      attempts.push({ value, violations });
+  let current = final;
+  let timedOut = false;
+  const rounds: ReportChecks["rounds"] = [];
+  if (audit) {
+    for (let round = 1; round <= MAX_CHECK_ROUNDS; round++) {
+      if (round > 1 && Date.now() > deadline) {
+        timedOut = true;
+        console.warn("Report time budget reached; skipping further check rounds");
+        break;
+      }
+      const violations = await checkReport(transcript, audit, current);
+      if (violations === null || violations.length === 0) {
+        rounds.push({ violations, deleted: [], unfixable: [] });
+        console.info("Report check round " + round + ": " + (violations === null ? "check failed" : "clean"));
+        break;
+      }
+      const parts = splitReport(current, REPORT_SPLIT_MARKER);
+      const sentences = numberSentences(parts);
+      const { deleteIds, unfixable } = matchViolations(sentences, violations);
+      const revised = applyDeletions(sentences, deleteIds, parts, { onlyOverLimit: false });
+      const deleted = sentences.filter((s) => deleteIds.includes(s.id) && !revised.includes(s.text)).map((s) => s.text);
+      rounds.push({ violations, deleted, unfixable });
       console.info(
-        "Report denial check attempt " + (i + 1) + ": " +
-          (violations === null ? "check failed" : violations.length + " violation(s)"),
+        "Report check round " + round + ": " + violations.length + " violation(s), deleted " +
+          deleted.length + " sentence(s), " + unfixable.length + " unfixable",
       );
-      // Stop when clean, or when the check can't run (nothing to retry against).
-      if (violations === null || violations.length === 0) break;
-      flagged.push(...violations);
+      // Nothing deletable left (only protected or unmatched quotes): stop.
+      if (revised === current) break;
+      current = revised;
     }
   }
 
-  const best = pickBest(attempts);
-  const checks: ReportChecks = {
-    audit,
-    attempts: attempts.map((a) => ({ violations: a.violations })),
-    shipped: attempts.indexOf(best),
-  };
-  const { draft, final } = best.value;
-  return { raw: final, draft, ...splitReport(final, REPORT_SPLIT_MARKER), checks };
+  const checks: ReportChecks = { audit, rounds, timedOut, ms: Date.now() - started };
+  return { raw: current, draft, ...splitReport(current, REPORT_SPLIT_MARKER), checks };
 }

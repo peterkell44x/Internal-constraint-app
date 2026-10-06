@@ -35,6 +35,7 @@ model Diagnostic {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   domain    String // "money" | "relationships" | "fitness" | "happiness"
   // "in_progress": still talking; "ready": AI emitted the readiness marker;
+  // "generating": the report is being built in the background;
   // "completed": report generated and saved.
   status    String   @default("in_progress")
   // Full message history exactly as sent to the model, starting with the
@@ -44,7 +45,9 @@ model Diagnostic {
 
   reportRaw     String? // unparsed model output, kept for safety
   reportDraft   String? // first draft before the review pass
-  reportChecks  Json? // denial check: audit and violations per attempt
+  reportChecks  Json? // denial check: audit and what each round flagged and deleted
+  reportStartedAt DateTime? // when background report generation started
+  reportError   String? // last report failure, shown to the person
   narrative     String?
   constraint    String?
   counterBelief String?
