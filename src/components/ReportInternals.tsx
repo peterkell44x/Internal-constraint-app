@@ -102,7 +102,9 @@ export default function ReportInternals({ draft, checks }: Props) {
           <AuditView audit={c.audit ?? null} />
 
           <h3>Length pass</h3>
-          {(c.lengthPasses ?? []).length === 0 ? (
+          {c.lengthPasses === undefined ? (
+            <p className="muted small">Not recorded for this report (made before length passes were saved).</p>
+          ) : c.lengthPasses.length === 0 ? (
             <p className="muted small">Not needed, or no sentences removed.</p>
           ) : (
             (c.lengthPasses as LengthPass[]).map((lp, i) => (
