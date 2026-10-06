@@ -176,10 +176,11 @@ async function draftAndCut(
   reportMsgs: ChatMessage[],
   system: string,
   deadline: number,
-): Promise<{ draft: string; final: string }> {
+): Promise<{ draft: string; final: string; lengthPasses: LengthPass[] }> {
   const draft = await callClaude(reportMsgs, system, REPORT_MAX_TOKENS);
 
   let current = draft;
+  const lengthPasses: LengthPass[] = [];
   for (let pass = 1; pass <= MAX_CUT_PASSES; pass++) {
     const parts = splitReport(current, REPORT_SPLIT_MARKER);
     if (!isOverLimits(parts)) break;
@@ -213,14 +214,19 @@ async function draftAndCut(
     }
     const before = reportLengths(parts);
     const after = reportLengths(splitReport(revised, REPORT_SPLIT_MARKER));
-    console.info(
-      "Report length pass " + pass + ": words " +
-        [before.narrative, before.constraint, before.counterBelief].join("/") + " -> " +
-        [after.narrative, after.constraint, after.counterBelief].join("/"),
-    );
+    const words = [before.narrative, before.constraint, before.counterBelief].join("/") + " -> " +
+      [after.narrative, after.constraint, after.counterBelief].join("/");
+    console.info("Report length pass " + pass + ": words " + words);
+    lengthPasses.push({ words, deleted: sentences.filter((x) => !revised.includes(x.text)).map((x) => x.text) });
     current = revised;
   }
-  return { draft, final: current };
+  return { draft, final: current, lengthPasses };
+}
+
+/** One length pass: word counts before and after, and the sentences it removed. */
+export interface LengthPass {
+  words: string;
+  deleted: string[];
 }
 
 // Calls that return JSON matching a schema. No dash stripping: the output is
@@ -269,6 +275,7 @@ const REPORT_TIME_BUDGET_MS = 4 * 60 * 1000;
 
 /** What the denial check saw and did, stored with the report for tuning. */
 export interface ReportChecks {
+  lengthPasses: LengthPass[];
   audit: Audit | null;
   rounds: { violations: Violation[] | null; deleted: string[]; unfixable: Violation[] }[];
   timedOut: boolean;
@@ -292,7 +299,7 @@ export async function generateReport(
   const transcript = formatTranscript(history, BEGIN_MESSAGE);
 
   // The audit only needs the conversation, so it runs alongside the draft.
-  const [{ draft, final }, audit] = await Promise.all([
+  const [{ draft, final, lengthPasses }, audit] = await Promise.all([
     draftAndCut(domain, reportMsgs, system, deadline),
     auditConversation(transcript),
   ]);
@@ -329,6 +336,6 @@ export async function generateReport(
     }
   }
 
-  const checks: ReportChecks = { audit, rounds, timedOut, ms: Date.now() - started };
+  const checks: ReportChecks = { lengthPasses, audit, rounds, timedOut, ms: Date.now() - started };
   return { raw: current, draft, ...splitReport(current, REPORT_SPLIT_MARKER), checks };
 }

@@ -117,8 +117,16 @@ export function numberSentences(r: ReportParts): Sentence[] {
           text,
           // The opening sentence of each final section carries its required
           // first words, the prompt asks for "architecture" when it fits, and
-          // "where they stand today" and the shift are required parts.
-          locked: isOpening || pi === todayParagraph || pi === shiftParagraph || /\barchitecture\b/i.test(text),
+          // "where they stand today" and the shift are required parts. The
+          // whole counter belief section is locked so its action step can never
+          // be cut; which sentence holds the action can't be told reliably, and
+          // it can span two.
+          locked:
+            isOpening ||
+            part === "counterBelief" ||
+            pi === todayParagraph ||
+            pi === shiftParagraph ||
+            /\barchitecture\b/i.test(text),
         });
       }
     });

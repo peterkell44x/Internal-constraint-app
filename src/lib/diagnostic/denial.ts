@@ -19,6 +19,8 @@ import type { Sentence } from "./review";
 export interface Audit {
   rejected: { interpretation: string; quote: string; answer?: "no" | "correction" | "uncertain" }[];
   confirmed: { link: string; quote: string }[];
+  /** Answers labelled uncertain with no clear denial in them; kept for the debug view, not used by the check. */
+  uncertain?: { interpretation: string; quote: string }[];
 }
 
 export type ViolationKind = "rejected" | "unconfirmed_link" | "not_said";
@@ -92,7 +94,7 @@ export const CHECK_SCHEMA = {
 
 export function buildAuditSystem(): string {
   return "You are auditing a diagnostic conversation between a GUIDE and a PERSON. Nothing you write is shown to the person. Produce two lists.\n\n"
-  + "rejected: every interpretation, explanation, or link that was put to the person, by the guide or as a possibility, and that the person rejected, denied, corrected, or answered no to. For each, give the interpretation in plain words, the person's exact words, and label their answer: no for a clear no or denial, correction for when they gave a different answer instead, or uncertain for idk, not sure, maybe, or not knowing.\n\n"
+  + "rejected: every interpretation, explanation, or link that was put to the person, by the guide or as a possibility, and that the person rejected, denied, corrected, or answered no to. For each, give the interpretation in plain words, the person's exact words, and label their answer: no for a clear no or denial, correction for when they gave a different answer instead, or uncertain for idk, not sure, maybe, or not knowing. If an answer is partly unsure but clearly denies something, for example maybe one thing, but I do not think it is that, label it no for what it denies.\n\n"
   + "confirmed: every link between two things that the person stated themselves or clearly agreed to when it was put to them. A link can be between something from their past and something they do now, between a feeling and a behavior, between two behaviors, or a reason they gave for something they did. For each, give the link in plain words and the person's exact words. Agreement must be clear, such as yes, that is it, or saying it in their own words. Silence, idk, changing the subject, or answering a different question is not agreement. A link only the guide stated is not confirmed.\n\n"
   + "Uncertainty is neither. If the person answered idk, not sure, maybe, or said they do not know, do not put it on either list. Only a clear no, a denial, or a correction is a rejection, and only clear agreement or their own statement is a confirmation.\n\n"
   + "Be literal and strict. Do not infer what they meant. Either list can be empty.";
@@ -133,12 +135,31 @@ export function parseAudit(text: string): Audit | null {
     if (!Array.isArray(j?.rejected) || !Array.isArray(j?.confirmed)) return null;
     // An uncertain answer (idk, not sure) is not a rejection. The model labels
     // each answer and the code drops the uncertain ones, since an instruction
-    // alone to leave them out was ignored in testing.
-    const rejected = j.rejected.filter((r: { answer?: string }) => r.answer !== "uncertain");
-    return { rejected, confirmed: j.confirmed };
+    // alone to leave them out was ignored in testing. But an answer that is
+    // partly unsure and still clearly denies something is kept, whatever the
+    // label says.
+    const keep = (r: Audit["rejected"][number]) => r.answer !== "uncertain" || containsDenial(r.quote);
+    const rejected = j.rejected.filter(keep);
+    const uncertain = j.rejected
+      .filter((r: Audit["rejected"][number]) => !keep(r))
+      .map((r: Audit["rejected"][number]) => ({ interpretation: r.interpretation, quote: r.quote }));
+    return { rejected, confirmed: j.confirmed, uncertain };
   } catch {
     return null;
   }
+}
+
+/**
+ * True when an answer clearly denies something, even if it also hedges. The
+ * phrases of not knowing ("i dont know", "not sure", "idk", "maybe") are
+ * removed first so they don't count as denials themselves.
+ */
+export function containsDenial(quote: string): boolean {
+  const rest = quote
+    .toLowerCase()
+    .replace(/[‘’]/g, "'")
+    .replace(/\bi\s*(do\s*n'?o?t|dont|don't)\s+know\b|\bidk\b|\bnot\s+sure\b|\bno\s+idea\b|\bunsure\b|\bmaybe\b|\bnot\s+certain\b/g, " ");
+  return /\b(no|nope|not|don'?t|dont|do not|didn'?t|didnt|isn'?t|isnt|wasn'?t|wasnt|never|wrong|disagree)\b/.test(rest);
 }
 
 export function parseViolations(text: string): Violation[] | null {

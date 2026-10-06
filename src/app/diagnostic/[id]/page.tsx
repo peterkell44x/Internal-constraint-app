@@ -2,7 +2,9 @@ import { notFound } from "next/navigation";
 
 import AppNav from "@/components/AppNav";
 import DiagnosticSession from "@/components/DiagnosticSession";
+import ReportInternals from "@/components/ReportInternals";
 import { requireUser } from "@/lib/auth";
+import { canSeeReportInternals } from "@/lib/debug";
 import { DOMAINS } from "@/lib/diagnostic/domains";
 import { findOwnedDiagnostic, toView } from "@/lib/diagnostic/store";
 
@@ -20,6 +22,9 @@ export default async function DiagnosticPage({ params }: PageProps<"/diagnostic/
         subtitle={domain.subtitle}
         reportTitle={domain.reportTitle}
       />
+      {d.status === "completed" && canSeeReportInternals(user.email) && (
+        <ReportInternals draft={d.reportDraft} checks={d.reportChecks} />
+      )}
     </>
   );
 }

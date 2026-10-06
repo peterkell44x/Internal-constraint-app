@@ -32,6 +32,7 @@ test("parseAudit and parseViolations accept the expected shape and reject anythi
   assert.deepEqual(parseAudit('{"rejected":[],"confirmed":[{"link":"a","quote":"b"}]}'), {
     rejected: [],
     confirmed: [{ link: "a", quote: "b" }],
+    uncertain: [],
   });
   assert.equal(parseAudit("not json"), null);
   assert.equal(parseAudit('{"rejected":[]}'), null);
@@ -108,4 +109,26 @@ test("denial deletions remove only the flagged sentences, from any part, in orde
   assert.equal(out.constraint, "Your subconscious internal constraint is: being seen trying is dangerous.");
   // With the length pass default, parts within their limit are untouched.
   assert.equal(splitReport(applyDeletions(s, deleteIds, p), "[SPLIT]").narrative, p.narrative);
+});
+
+test("containsDenial spots a denial inside a hedged answer, but not plain uncertainty", async () => {
+  const { containsDenial } = await import("../src/lib/diagnostic/denial.ts");
+  // The real answer that was wrongly dropped: hedged, then a clear denial of the cause.
+  assert.ok(containsDenial("maybe a part of me is not in a rush. to a degree, i should be faster. but i dont think the reason is because the outcome already feels guaranteed."));
+  assert.ok(containsDenial("no, because once i thought of the idea, i decided to work on it."));
+  assert.ok(!containsDenial("idk thats why im talking to you. there might be something im unaware of. idk to be honest"));
+  assert.ok(!containsDenial("i dont know"));
+  assert.ok(!containsDenial("not sure, maybe"));
+});
+
+test("parseAudit keeps an uncertain-labelled answer that clearly denies, and records the truly uncertain ones", () => {
+  const a = parseAudit(JSON.stringify({
+    rejected: [
+      { interpretation: "the outcome feels guaranteed", quote: "maybe a part of me is not in a rush. but i dont think the reason is because the outcome already feels guaranteed.", answer: "uncertain" },
+      { interpretation: "there is a constraint", quote: "idk thats why im talking to you", answer: "uncertain" },
+    ],
+    confirmed: [],
+  }));
+  assert.deepEqual(a?.rejected.map((r) => r.interpretation), ["the outcome feels guaranteed"]);
+  assert.deepEqual(a?.uncertain?.map((r) => r.interpretation), ["there is a constraint"]);
 });

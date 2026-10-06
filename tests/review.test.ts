@@ -60,7 +60,9 @@ test("numberSentences locks section openings and the architecture sentence", () 
   assert.ok(locked.some((t) => t.startsWith("Your subconscious internal constraint is:")));
   assert.ok(locked.some((t) => t.startsWith("The counter belief is:")));
   assert.ok(locked.includes("That is the shift."));
-  assert.equal(locked.length, 4);
+  // The whole counter belief section (3 sentences) is locked, so its action step stays.
+  assert.ok(locked.includes("Take one day off this week."));
+  assert.equal(locked.length, 6);
 });
 
 test("parseDeletions reads numbers from the delete block only", () => {
@@ -174,4 +176,14 @@ test("the final narrative paragraph is locked whole, so the shift is never left 
   const s = numberSentences(p);
   const out = parts(applyDeletions(s, s.map((x) => x.id), p));
   assert.ok(out.narrative.endsWith("The real cost is not that it slowed you down. It is that you still believe it."));
+});
+
+test("the counter belief's action step survives any deletion request, from either pass", () => {
+  const p = parts(longReport);
+  const s = numberSentences(p);
+  const all = s.map((x) => x.id);
+  for (const onlyOverLimit of [true, false]) {
+    const out = parts(applyDeletions(s, all, p, { onlyOverLimit }));
+    assert.equal(out.counterBelief, p.counterBelief);
+  }
 });

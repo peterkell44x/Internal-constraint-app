@@ -243,3 +243,19 @@ details.transcript-details summary { cursor: pointer; font-size: 13px; color: va
 .building-panel button { margin-top: 10px; }
 .building-title { font-size: 14px; font-weight: 600; }
 .building-timer { font-variant-numeric: tabular-nums; font-weight: 500; opacity: 0.75; margin-left: 6px; }
+
+/* Debug view of how a report was checked (allow-listed accounts only) */
+.internals {
+  margin-top: 24px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 13px;
+}
+.internals summary { cursor: pointer; color: var(--text-secondary); }
+.internals h3 { font-size: 13px; margin: 18px 0 6px; }
+.internals h4 { font-size: 12px; margin: 12px 0 4px; color: var(--text-secondary); }
+.internals-list { margin: 4px 0 8px; padding-left: 18px; }
+.internals-list li { margin-bottom: 6px; line-height: 1.45; }
+.internals-round { border-top: 1px solid var(--border); padding-top: 6px; margin-top: 8px; }
+.internals-pre { white-space: pre-wrap; background: var(--muted-bg); border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
