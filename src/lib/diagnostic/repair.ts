@@ -3,14 +3,17 @@
 // 1. Reference repair. Deleting a sentence can leave a later one pointing at
 //    something only the deleted sentence introduced ("your parents' belief"
 //    with the belief itself cut). A call lists such sentences with a minimal
-//    replacement, and the code swaps only those exact sentences.
+//    replacement, and the code swaps only those exact sentences, refusing any
+//    replacement that brings back wording from a deleted sentence or from
+//    something the person rejected.
 //
-// 2. Targeted section rewrite. The constraint, the counter belief, and the
-//    final narrative paragraph are protected from deletion, so a violation in
-//    them can't be removed. If the check still flags one of them, that section
-//    alone is rewritten once from the confirmed and rejected lists. The code
-//    rejects a rewrite that breaks the word limit, loses its required opening,
-//    or uses an absolute the person never used.
+// 2. Targeted section rewrite. Protected sentences (section openings, the
+//    counter belief, the architecture sentence, the "where they stand today"
+//    and final paragraphs) can't be deleted, so a violation in one is fixed by
+//    rewriting just the section or paragraph that holds it, from the confirmed
+//    and rejected lists. The code rejects a rewrite that breaks the word limit,
+//    loses its required opening or the word architecture, or uses an absolute
+//    the person never used.
 //
 // Pure module (no imports besides types) so the tests can load it directly.
 
@@ -22,7 +25,12 @@ export const SECTION_MAX = 75;
 const CONSTRAINT_PREFIX = "Your subconscious internal constraint is:";
 const COUNTER_PREFIX = "The counter belief is:";
 
-export type SectionName = "constraint" | "counterBelief" | "shift";
+/** A rewritable section: a final section, or a narrative paragraph (1-based). */
+export type SectionName = "constraint" | "counterBelief" | `paragraph${number}`;
+
+function paragraphIndex(section: SectionName): number {
+  return Number(section.slice("paragraph".length)) - 1;
+}
 
 /** Lowercase words only, so quotes match regardless of punctuation and spacing. */
 export function normalize(text: string): string {
@@ -37,28 +45,24 @@ function paragraphsOf(narrative: string): string[] {
   return narrative.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
 }
 
-/**
- * Which of the rewritable sections a sentence belongs to, or null. The shift
- * is the final narrative paragraph.
- */
-export function sectionOf(s: Sentence, sentences: Sentence[]): SectionName | null {
+/** The section a sentence belongs to: a final section, or its narrative paragraph. */
+export function sectionOf(s: Sentence): SectionName {
   if (s.part === "constraint") return "constraint";
   if (s.part === "counterBelief") return "counterBelief";
-  const lastPara = Math.max(...sentences.filter((x) => x.part === "narrative").map((x) => x.paragraph));
-  return s.part === "narrative" && s.paragraph === lastPara && lastPara > 0 ? "shift" : null;
+  return `paragraph${s.paragraph + 1}`;
 }
 
 /** The current text of a section. */
 export function sectionText(parts: ReportParts, section: SectionName): string {
   if (section === "constraint") return parts.constraint;
   if (section === "counterBelief") return parts.counterBelief;
-  return paragraphsOf(parts.narrative).at(-1) ?? "";
+  return paragraphsOf(parts.narrative)[paragraphIndex(section)] ?? "";
 }
 
-/** The word limit for a rewritten section; the shift shares the narrative's limit. */
+/** The word limit for a rewritten section; a paragraph shares the narrative's limit. */
 export function sectionLimit(parts: ReportParts, section: SectionName): number {
-  if (section !== "shift") return SECTION_MAX;
-  const rest = countWords(parts.narrative) - countWords(sectionText(parts, "shift"));
+  if (section === "constraint" || section === "counterBelief") return SECTION_MAX;
+  const rest = countWords(parts.narrative) - countWords(sectionText(parts, section));
   return Math.max(15, NARRATIVE_MAX - rest);
 }
 
@@ -67,8 +71,18 @@ export function replaceSection(parts: ReportParts, section: SectionName, text: s
   if (section === "constraint") return { ...parts, constraint: text.trim() };
   if (section === "counterBelief") return { ...parts, counterBelief: text.trim() };
   const paras = paragraphsOf(parts.narrative);
-  paras[paras.length - 1] = text.trim();
+  const i = paragraphIndex(section);
+  if (i < 0 || i >= paras.length) return parts;
+  paras[i] = text.trim();
   return { ...parts, narrative: paras.join("\n\n") };
+}
+
+/** A readable name for a section, for the debug view. */
+export function sectionLabel(section: SectionName, paragraphCount?: number): string {
+  if (section === "constraint") return "Constraint";
+  if (section === "counterBelief") return "Counter belief";
+  const n = paragraphIndex(section) + 1;
+  return "Narrative paragraph " + n + (paragraphCount && n === paragraphCount ? " (final)" : "");
 }
 
 export function joinReport(p: ReportParts): string {
@@ -79,12 +93,19 @@ const ABSOLUTES = ["only", "always", "never"];
 
 /**
  * Problems that make a rewritten section unusable: a missing required
- * opening, going over its word limit, or an absolute (only, always, never)
- * the person never used in the conversation.
+ * opening, going over its word limit, dropping the word architecture when the
+ * original had it, or an absolute (only, always, never) the person never used.
  */
-export function rewriteIssues(section: SectionName, text: string, limit: number, personWords: string): string[] {
+export function rewriteIssues(
+  section: SectionName,
+  text: string,
+  limit: number,
+  personWords: string,
+  original = "",
+): string[] {
   const issues: string[] = [];
   const t = text.trim();
+  if (/\barchitecture\b/i.test(original) && !/\barchitecture\b/i.test(t)) issues.push("dropped the word architecture");
   if (!t) issues.push("empty");
   if (section === "constraint" && !t.startsWith(CONSTRAINT_PREFIX)) issues.push("missing the required opening words");
   if (section === "counterBelief" && !t.startsWith(COUNTER_PREFIX)) issues.push("missing the required opening words");
@@ -114,7 +135,7 @@ export const REWRITE_SCHEMA = {
         additionalProperties: false,
         required: ["section", "text"],
         properties: {
-          section: { type: "string", enum: ["constraint", "counterBelief", "shift"] },
+          section: str,
           text: str,
         },
       },
@@ -134,8 +155,8 @@ export function buildRewriteSystem(reportTitle: string, goalPhrase: string): str
   + "Write in second person, plain and direct, matching the voice of the rest of the profile.\n\n"
   + "constraint: start with the exact words " + CONSTRAINT_PREFIX + " then name the belief inside what the person confirmed, and how it stands between them and " + goalPhrase + ", only as far as what they said supports.\n"
   + "counterBelief: start with the exact words " + COUNTER_PREFIX + " then answer that same belief in first person, then give one action they can do and check off this week that tests the belief and produces something tangible they can point to afterward, such as a record, a number, or a message sent, not only writing down thoughts.\n"
-  + "shift: the closing paragraph of the narrative. State the one shift that would change things, in plain words, using only what was confirmed.\n\n"
-  + "Rewrite only the sections listed, and return each with its new text.";
+  + "paragraph sections (paragraph1, paragraph2 and so on): one paragraph of the narrative. Keep its role in the profile, for example the closing shift or where they stand today, state it in plain words using only what was confirmed, and if its current text uses the word architecture, keep that word once.\n\n"
+  + "Rewrite only the sections listed, return each with its new text, and use the section names exactly as given.";
 }
 
 function formatList(items: { text: string; quote: string }[]): string {
@@ -192,13 +213,43 @@ export const REPAIR_SCHEMA = {
 
 export function buildRepairSystem(): string {
   return "Some sentences were deleted from a written profile because they were inaccurate or too long. Your job is to find remaining sentences that no longer make sense on their own because they refer to something that was only introduced in a deleted sentence, for example a pronoun, that belief, this pattern, the same move, or a person or idea that is now never introduced.\n\n"
-  + "For each such sentence, give the sentence exactly as it appears in the profile, and a minimal replacement that makes it understandable on its own. Change as few words as possible. Use only facts the person stated in the conversation. Do not bring back any claim from the deleted sentences. Keep any required opening words, such as Your subconscious internal constraint is: or The counter belief is:. Never use any dash character.\n\n"
+  + "For each such sentence, give the sentence exactly as it appears in the profile, and a minimal replacement that makes it understandable on its own. Change as few words as possible. Use only facts the person stated in the conversation. Do not bring back any claim from the deleted sentences or anything on the rejected list, in any wording; if the sentence can only make sense by bringing one back, give the shortest neutral replacement instead, such as naming the person or thing in plain words. Keep any required opening words, such as Your subconscious internal constraint is: or The counter belief is:. Never use any dash character.\n\n"
   + "Do not list sentences that already make sense. If there are none, return an empty list.";
 }
 
-export function buildRepairInput(transcript: string, deleted: string[], report: string): string {
+export function buildRepairInput(transcript: string, deleted: string[], rejected: string[], report: string): string {
   return "CONVERSATION\n\n" + transcript + "\n\nDELETED SENTENCES\n" + deleted.map((d) => "- " + d).join("\n")
+    + "\n\nREJECTED BY THE PERSON\n" + (rejected.length ? rejected.map((r) => "- " + r).join("\n") : "(none)")
     + "\n\nCURRENT PROFILE\n\n" + report;
+}
+
+const STOPWORDS = new Set(
+  ("a an and are as at be been but by do does for from had has have he her his i if in into is it its just me my not " +
+    "of on or our she so than that the their them then there they this to too was we were what when which who will " +
+    "with you your yours youre").split(" "),
+);
+
+/** Three-word phrases with at least two meaningful words. */
+function phrases(text: string): Set<string> {
+  const w = normalize(text).split(" ").filter(Boolean);
+  const out = new Set<string>();
+  for (let i = 0; i + 2 < w.length; i++) {
+    const tri = w.slice(i, i + 3);
+    if (tri.filter((x) => !STOPWORDS.has(x)).length >= 2) out.add(tri.join(" "));
+  }
+  return out;
+}
+
+/**
+ * The first phrase a replacement adds (one not in the original sentence) that
+ * also appears in forbidden text, such as a deleted sentence or something the
+ * person rejected. Null when it adds nothing forbidden.
+ */
+export function reintroducedPhrase(original: string, replacement: string, forbidden: string[]): string | null {
+  const before = phrases(original);
+  const banned = new Set(forbidden.flatMap((f) => [...phrases(f)]));
+  for (const p of phrases(replacement)) if (!before.has(p) && banned.has(p)) return p;
+  return null;
 }
 
 export function parseRepairs(text: string): { original: string; replacement: string }[] | null {
@@ -226,6 +277,7 @@ export function applyRepairs(
   parts: ReportParts,
   sentences: Sentence[],
   repairs: { original: string; replacement: string }[],
+  forbidden: string[] = [],
 ): RepairOutcome {
   let report = { ...parts };
   const applied: RepairOutcome["applied"] = [];
@@ -239,6 +291,10 @@ export function applyRepairs(
     else if (target.text.startsWith(CONSTRAINT_PREFIX) && !replacement.startsWith(CONSTRAINT_PREFIX)) reason = "dropped the required opening";
     else if (target.text.startsWith(COUNTER_PREFIX) && !replacement.startsWith(COUNTER_PREFIX)) reason = "dropped the required opening";
     else if (countWords(replacement) > countWords(target.text) + 15) reason = "replacement adds too much";
+    else {
+      const back = reintroducedPhrase(target.text, replacement, forbidden);
+      if (back) reason = 'brings back deleted or rejected wording ("' + back + '")';
+    }
     if (reason || !target) {
       skipped.push({ ...r, reason });
       continue;

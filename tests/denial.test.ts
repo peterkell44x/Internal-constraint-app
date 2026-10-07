@@ -132,3 +132,30 @@ test("parseAudit keeps an uncertain-labelled answer that clearly denies, and rec
   assert.deepEqual(a?.rejected.map((r) => r.interpretation), ["the outcome feels guaranteed"]);
   assert.deepEqual(a?.uncertain?.map((r) => r.interpretation), ["there is a constraint"]);
 });
+
+test("extractNumbers reads digits, ranges, money and number words", async () => {
+  const { extractNumbers } = await import("../src/lib/diagnostic/denial.ts");
+  assert.deepEqual([...extractNumbers("i've trained 4-5 years")].sort(), [4, 5]);
+  assert.deepEqual([...extractNumbers("training for four to five years")].sort(), [4, 5]);
+  assert.ok(extractNumbers("$35k saved").has(35000));
+  assert.ok(extractNumbers("about $6,000 a month").has(6000));
+  assert.ok(extractNumbers("twenty five minutes").has(25));
+  assert.ok(extractNumbers("a hundred times").has(100));
+  assert.equal(extractNumbers("a dog and an idea").size, 0);
+});
+
+test("dismissNumberFalsePositives drops number flags the person's words support, and keeps the rest", async () => {
+  const { dismissNumberFalsePositives } = await import("../src/lib/diagnostic/denial.ts");
+  const person = "ive been training 4-5 years. like 4-5 years honestly";
+  const { kept, dismissed } = dismissNumberFalsePositives(
+    [
+      { quote: "You have been training for four to five years.", kind: "not_said", reason: "The person never said four to five years." },
+      { quote: "You have been training for six years.", kind: "not_said", reason: "The person never said six years." },
+      { quote: "You trained for four years with your brother.", kind: "not_said", reason: "The person never mentioned a brother." },
+      { quote: "You lose four to five years to fear.", kind: "unconfirmed_link", reason: "Not confirmed." },
+    ],
+    person,
+  );
+  assert.deepEqual(dismissed.map((v) => v.quote), ["You have been training for four to five years."]);
+  assert.equal(kept.length, 3);
+});

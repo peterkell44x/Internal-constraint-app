@@ -1,5 +1,7 @@
 import { jsonError, userOr401 } from "@/lib/api";
+import { db } from "@/lib/db";
 import { describeError, sendUserMessage } from "@/lib/diagnostic/engine";
+import { HARD_CEILING } from "@/lib/diagnostic/prompts";
 import { findOwnedDiagnostic, historyOf, messagesJson, saveIfUnchanged, toView } from "@/lib/diagnostic/store";
 
 const MAX_ANSWER_LENGTH = 8000;
@@ -19,6 +21,13 @@ export async function POST(req: Request, ctx: RouteContext<"/api/diagnostics/[id
   const history = historyOf(d);
   if (d.status !== "in_progress" || history.length === 0) {
     return jsonError(409, "This conversation is not accepting answers.");
+  }
+  // Never accept an answer past the limit, even if an older conversation was
+  // left open by a missing readiness marker.
+  if (d.userTurns >= HARD_CEILING) {
+    await db.diagnostic.updateMany({ where: { id: d.id, status: "in_progress" }, data: { status: "ready" } });
+    const fresh = await findOwnedDiagnostic(d.id, user.id);
+    return Response.json(toView(fresh!));
   }
   // The client says which turn it thinks it is answering; reject stale tabs.
   if (typeof body?.userTurns === "number" && body.userTurns !== d.userTurns) {

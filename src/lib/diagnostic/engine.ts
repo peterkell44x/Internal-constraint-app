@@ -32,6 +32,7 @@ import {
   buildCheckInput,
   buildCheckSystem,
   CHECK_SCHEMA,
+  dismissNumberFalsePositives,
   findQuotedSentences,
   formatTranscript,
   matchViolations,
@@ -53,6 +54,7 @@ import {
   REWRITE_SCHEMA,
   rewriteIssues,
   type SectionName,
+  sectionLabel,
   sectionLimit,
   sectionOf,
   sectionText,
@@ -151,7 +153,11 @@ export async function sendUserMessage(
   const forceClose = turns >= HARD_CEILING;
   const system = forceClose ? FORCE_CLOSE_SYSTEM_PROMPT : buildSystemPrompt(DOMAINS[domain]);
   const reply = await callClaude(messages, system);
-  return { ...applyReply(messages, reply), userTurns: turns };
+  const result = applyReply(messages, reply);
+  // At the answer limit the conversation ends whatever the reply says. Before,
+  // it ended only if the model emitted the readiness marker, so a reply
+  // without it let the chat run past the limit.
+  return { ...result, ready: result.ready || forceClose, userTurns: turns };
 }
 
 export interface Report {
@@ -284,9 +290,11 @@ async function checkReport(transcript: string, audit: Audit, report: string): Pr
 // The audit and check replies are short lists.
 const CHECK_MAX_TOKENS = 4000;
 
-// Check-and-delete rounds. Each checks the current report and deletes the
-// sentences it flags; the second catches anything the first missed.
-const MAX_CHECK_ROUNDS = 2;
+// Checks of the report. After each one except the last, the flagged sentences
+// are fixed: unprotected ones deleted, references they leave dangling
+// repaired, and protected ones rewritten with their section. The last check
+// only records what still ships.
+const MAX_CHECKS = 3;
 
 // The reference-repair and section-rewrite replies are short.
 const FIX_MAX_TOKENS = 3000;
@@ -295,25 +303,45 @@ const FIX_MAX_TOKENS = 3000;
 // ships as it stands, keeping generation well inside hosting time limits.
 const REPORT_TIME_BUDGET_MS = 4 * 60 * 1000;
 
+export interface RewriteRecord {
+  section: SectionName;
+  label: string;
+  flagged: Violation[];
+  before: string;
+  after: string | null;
+  accepted: boolean;
+  issues: string[];
+}
+
+export interface CheckRound {
+  violations: Violation[] | null;
+  /** "Not said" number flags dropped because the person did say those numbers. */
+  dismissed: Violation[];
+  deleted: string[];
+  /** Flags in protected sentences (or quotes not found), sent to the rewrite. */
+  unfixable: Violation[];
+  repairs?: { applied: { original: string; replacement: string }[]; skipped: { original: string; replacement: string; reason: string }[] } | null;
+  rewrite?: RewriteRecord[] | null;
+}
+
 /** What the denial check saw and did, stored with the report for tuning. */
 export interface ReportChecks {
   lengthPasses: LengthPass[];
   audit: Audit | null;
-  rounds: { violations: Violation[] | null; deleted: string[]; unfixable: Violation[] }[];
-  /** Sentences repaired because they referred to something that was deleted. */
-  repairs?: { applied: { original: string; replacement: string }[]; skipped: { original: string; replacement: string; reason: string }[] } | null;
-  /** The one targeted rewrite of flagged protected sections. */
-  rewrite?: { section: SectionName; flagged: Violation[]; before: string; after: string | null; accepted: boolean; issues: string[] }[] | null;
-  /** The check after repairs and the rewrite; whatever it still flags ships. */
-  final?: { violations: Violation[] | null } | null;
+  rounds: CheckRound[];
   timedOut: boolean;
   ms: number;
+  /** Older reports stored these at the top level; kept so they still display. */
+  repairs?: CheckRound["repairs"];
+  rewrite?: RewriteRecord[] | null;
+  final?: { violations: Violation[] | null } | null;
 }
 
 /**
- * Mirrors the prototype's report button handler, followed by the length pass,
- * the delete-only denial check, reference repair, and a targeted rewrite of
- * any protected section that is still flagged.
+ * Mirrors the prototype's report button handler, followed by the length pass
+ * and up to three checks; after each but the last, flagged sentences are
+ * deleted, dangling references repaired, and flagged protected sections
+ * rewritten.
  */
 export async function generateReport(
   domain: DomainKey,
@@ -336,68 +364,75 @@ export async function generateReport(
 
   let current = final;
   let timedOut = false;
-  const rounds: ReportChecks["rounds"] = [];
-  const checks: ReportChecks = { lengthPasses, audit, rounds, timedOut, ms: 0 };
+  const rounds: CheckRound[] = [];
+  const rewriteCount = new Map<SectionName, number>();
+  const everDeleted = lengthPasses.flatMap((lp) => lp.deleted);
+  const rejectedText = audit ? audit.rejected.flatMap((r) => [r.interpretation, r.quote]) : [];
+
   if (audit) {
-    for (let round = 1; round <= MAX_CHECK_ROUNDS; round++) {
-      if (round > 1 && Date.now() > deadline) {
+    for (let n = 1; n <= MAX_CHECKS; n++) {
+      if (n > 1 && Date.now() > deadline) {
         timedOut = true;
-        console.warn("Report time budget reached; skipping further check rounds");
+        console.warn("Report time budget reached; skipping further checks");
         break;
       }
-      const violations = await checkReport(transcript, audit, current);
+      const found = await checkReport(transcript, audit, current);
+      const { kept: violations, dismissed } =
+        found === null ? { kept: null, dismissed: [] } : dismissNumberFalsePositives(found, personWords);
+      const round: CheckRound = { violations, dismissed, deleted: [], unfixable: [] };
+      rounds.push(round);
       if (violations === null || violations.length === 0) {
-        rounds.push({ violations, deleted: [], unfixable: [] });
-        console.info("Report check round " + round + ": " + (violations === null ? "check failed" : "clean"));
+        console.info("Report check " + n + ": " + (violations === null ? "check failed" : "clean"));
         break;
       }
-      const parts = splitReport(current, REPORT_SPLIT_MARKER);
-      const sentences = numberSentences(parts);
+      console.info("Report check " + n + ": " + violations.length + " violation(s), " + dismissed.length + " dismissed");
+      // The last check only records what ships.
+      if (n === MAX_CHECKS) break;
+
+      // 1. Delete flagged sentences that aren't protected.
+      let parts = splitReport(current, REPORT_SPLIT_MARKER);
+      let sentences = numberSentences(parts);
       const { deleteIds, unfixable } = matchViolations(sentences, violations);
-      const revised = applyDeletions(sentences, deleteIds, parts, { onlyOverLimit: false });
-      const deleted = sentences.filter((s) => deleteIds.includes(s.id) && !revised.includes(s.text)).map((s) => s.text);
-      rounds.push({ violations, deleted, unfixable });
-      console.info(
-        "Report check round " + round + ": " + violations.length + " violation(s), deleted " +
-          deleted.length + " sentence(s), " + unfixable.length + " unfixable",
-      );
-      // Nothing deletable left (only protected or unmatched quotes): stop.
-      if (revised === current) break;
-      current = revised;
-    }
+      const afterDelete = applyDeletions(sentences, deleteIds, parts, { onlyOverLimit: false });
+      round.deleted = sentences.filter((x) => deleteIds.includes(x.id) && !afterDelete.includes(x.text)).map((x) => x.text);
+      round.unfixable = unfixable;
+      current = afterDelete;
+      everDeleted.push(...round.deleted);
 
-    let changed = false;
-
-    // Repair sentences left pointing at something a deletion removed.
-    const allDeleted = [...lengthPasses.flatMap((lp) => lp.deleted), ...rounds.flatMap((r) => r.deleted)];
-    if (allDeleted.length > 0) {
-      const parts = splitReport(current, REPORT_SPLIT_MARKER);
-      const repairs = await callFix(buildRepairSystem(), buildRepairInput(transcript, allDeleted, current), REPAIR_SCHEMA, parseRepairs);
-      if (repairs === null) {
-        checks.repairs = null;
-      } else {
-        const cleaned = repairs.map((r) => ({ original: r.original, replacement: stripDashes(r.replacement) }));
-        const outcome = applyRepairs(parts, numberSentences(parts), cleaned);
-        checks.repairs = { applied: outcome.applied, skipped: outcome.skipped };
-        if (outcome.applied.length > 0) {
-          current = joinReport(outcome.report);
-          changed = true;
+      // 2. Repair sentences left pointing at something a deletion removed.
+      if (round.deleted.length > 0) {
+        parts = splitReport(current, REPORT_SPLIT_MARKER);
+        const repairs = await callFix(
+          buildRepairSystem(),
+          buildRepairInput(transcript, everDeleted, rejectedText, current),
+          REPAIR_SCHEMA,
+          parseRepairs,
+        );
+        if (repairs === null) {
+          round.repairs = null;
+        } else {
+          const cleaned = repairs.map((r) => ({ original: r.original, replacement: stripDashes(r.replacement) }));
+          const outcome = applyRepairs(parts, numberSentences(parts), cleaned, [...everDeleted, ...rejectedText]);
+          round.repairs = { applied: outcome.applied, skipped: outcome.skipped };
+          if (outcome.applied.length > 0) current = joinReport(outcome.report);
+          console.info("Report reference repair: " + outcome.applied.length + " applied, " + outcome.skipped.length + " skipped");
         }
-        console.info("Report reference repair: " + outcome.applied.length + " applied, " + outcome.skipped.length + " skipped");
       }
-    }
 
-    // One targeted rewrite of any protected section the last round still flags.
-    const lastFlags = rounds.at(-1)?.unfixable ?? [];
-    if (lastFlags.length > 0) {
-      const parts = splitReport(current, REPORT_SPLIT_MARKER);
-      const sentences = numberSentences(parts);
+      // 3. Rewrite each section that holds a flagged protected sentence, at
+      //    most twice per section.
+      parts = splitReport(current, REPORT_SPLIT_MARKER);
+      sentences = numberSentences(parts);
       const flaggedBySection = new Map<SectionName, Violation[]>();
-      for (const v of lastFlags) {
-        const sections = new Set(findQuotedSentences(sentences, v.quote).map((s) => sectionOf(s, sentences)));
-        for (const sec of sections) if (sec) flaggedBySection.set(sec, [...(flaggedBySection.get(sec) ?? []), v]);
+      for (const v of unfixable) {
+        const sections = new Set(findQuotedSentences(sentences, v.quote).filter((x) => x.locked).map(sectionOf));
+        for (const sec of sections) {
+          if ((rewriteCount.get(sec) ?? 0) >= 2) continue;
+          flaggedBySection.set(sec, [...(flaggedBySection.get(sec) ?? []), v]);
+        }
       }
       if (flaggedBySection.size > 0) {
+        const paragraphCount = parts.narrative.split(/\n\s*\n/).filter((x) => x.trim()).length;
         const targets = [...flaggedBySection].map(([section, flagged]) => ({
           section,
           flagged,
@@ -412,34 +447,22 @@ export async function generateReport(
           parseRewrite,
         );
         let updated = parts;
-        checks.rewrite = targets.map((t) => {
+        round.rewrite = targets.map((t) => {
+          rewriteCount.set(t.section, (rewriteCount.get(t.section) ?? 0) + 1);
           const proposal = rewritten?.find((r) => r.section === t.section)?.text ?? null;
           const text = proposal === null ? null : stripDashes(proposal);
-          const issues = text === null ? ["no rewrite returned"] : rewriteIssues(t.section, text, t.limit, personWords);
+          const issues = text === null ? ["no rewrite returned"] : rewriteIssues(t.section, text, t.limit, personWords, t.current);
           const accepted = issues.length === 0;
           if (accepted && text !== null) updated = replaceSection(updated, t.section, text);
-          return { section: t.section, flagged: t.flagged, before: t.current, after: text, accepted, issues };
+          return { section: t.section, label: sectionLabel(t.section, paragraphCount), flagged: t.flagged, before: t.current, after: text, accepted, issues };
         });
-        if (checks.rewrite.some((r) => r.accepted)) {
-          current = joinReport(updated);
-          changed = true;
-        }
-        console.info(
-          "Report section rewrite: " + checks.rewrite.map((r) => r.section + (r.accepted ? " accepted" : " rejected")).join(", "),
-        );
+        if (round.rewrite.some((r) => r.accepted)) current = joinReport(updated);
+        console.info("Report section rewrite: " + round.rewrite.map((r) => r.label + (r.accepted ? " accepted" : " rejected")).join(", "));
       }
-    }
-
-    // Check once more after repairs or the rewrite; what it flags ships and is
-    // shown in the debug view.
-    if (changed) {
-      checks.final = { violations: await checkReport(transcript, audit, current) };
-      console.info("Report final check: " + (checks.final.violations?.length ?? "failed") + " violation(s)");
     }
   }
 
-  checks.timedOut = timedOut;
-  checks.ms = Date.now() - started;
+  const checks: ReportChecks = { lengthPasses, audit, rounds, timedOut, ms: Date.now() - started };
   return { raw: current, draft, ...splitReport(current, REPORT_SPLIT_MARKER), checks };
 }
 

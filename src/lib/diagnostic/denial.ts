@@ -110,6 +110,7 @@ export function buildCheckSystem(): string {
   + "rejected: states, implies, or rewords anything on the rejected list. Only items on that list count as rejected; a question the person answered with idk or uncertainty is not a rejection.\n"
   + "unconfirmed_link: presents a link, cause, pattern, or same move between separate things the person said, or turns one thing they said or did into a general pattern of how they operate, when that link is not on the confirmed list and the person did not state it themselves.\n"
   + "not_said: states as fact something about the person or anyone in their life that the person never said, such as an event, number, feeling, motive, or a consequence that rests on a fact about their situation they never stated.\n\n"
+  + "Before flagging a number, amount, age, or duration, read every message from the person. Numbers can be written as digits or words and ranges can be written as 4-5 or four to five; these mean the same thing.\n\n"
   + "Do not flag: things the person said, links on the confirmed list and how they play out, what a single thing the person said means in their own framing, the suggested action in the counter belief section, or wording and style. When in doubt whether the person said something, check the conversation.\n\n"
   + "For each violation, quote the exact sentence or clause from the profile and give a short reason. If there are none, return an empty list.";
 }
@@ -224,4 +225,73 @@ export function matchViolations(sentences: Sentence[], violations: Violation[]):
     for (const s of hits) if (!s.locked) deleteIds.add(s.id);
   }
   return { deleteIds: [...deleteIds], unfixable };
+}
+
+const UNITS: Record<string, number> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
+  eighteen: 18, nineteen: 19, a: 1, an: 1, half: 0.5,
+};
+const TENS: Record<string, number> = {
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+
+/**
+ * Every number in a text, from digits ("4-5", "35k", "$6,000") or words
+ * ("four to five", "twenty five", "a hundred"). Words like "a" only count as
+ * 1 before a scale word ("a hundred"), so ordinary text doesn't add 1s.
+ */
+export function extractNumbers(text: string): Set<number> {
+  const out = new Set<number>();
+  const t = text.toLowerCase();
+  for (const m of t.matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(k|m)?\b/g)) {
+    let n = parseFloat(m[1].replace(/,/g, ""));
+    if (m[2] === "k") n *= 1000;
+    if (m[2] === "m") n *= 1000000;
+    out.add(n);
+  }
+  const words = t.replace(/[^a-z]+/g, " ").split(" ").filter(Boolean);
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    let n: number | null = null;
+    if (w in TENS) {
+      n = TENS[w];
+      if (words[i + 1] in UNITS && UNITS[words[i + 1]] >= 1 && UNITS[words[i + 1]] <= 9 && words[i + 1] !== "a") {
+        n += UNITS[words[i + 1]];
+        i++;
+      }
+    } else if (w in UNITS && w !== "a" && w !== "an") {
+      n = UNITS[w];
+    } else if ((w === "a" || w === "an") && (words[i + 1] === "hundred" || words[i + 1] === "thousand")) {
+      n = 1;
+    }
+    if (n === null) continue;
+    if (words[i + 1] === "hundred") { n *= 100; i++; }
+    else if (words[i + 1] === "thousand") { n *= 1000; i++; }
+    out.add(n);
+  }
+  return out;
+}
+
+const NUMBERISH_REASON = /\d|\b(year|years|month|months|week|weeks|day|days|hour|hours|minute|minutes|time|number|amount|age|old|duration|long|dollar|dollars|percent|range|figure|count|one|two|three|four|five|six|seven|eight|nine|ten|twelve|twenty|thirty|forty|fifty|hundred|thousand)\b|\$/i;
+
+/**
+ * Drops "not said" flags that are only about numbers the person did say, in
+ * any form. Kept when the quote has no number, when any of its numbers is
+ * missing from the person's messages, or when the reason isn't about a number.
+ */
+export function dismissNumberFalsePositives(
+  violations: Violation[],
+  personText: string,
+): { kept: Violation[]; dismissed: Violation[] } {
+  const said = extractNumbers(personText);
+  const kept: Violation[] = [];
+  const dismissed: Violation[] = [];
+  for (const v of violations) {
+    const nums = [...extractNumbers(v.quote)];
+    const allSaid = nums.length > 0 && nums.every((n) => said.has(n));
+    if (v.kind === "not_said" && allSaid && NUMBERISH_REASON.test(v.reason)) dismissed.push(v);
+    else kept.push(v);
+  }
+  return { kept, dismissed };
 }
