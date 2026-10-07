@@ -104,10 +104,13 @@ test("matchViolations tolerates punctuation, case and trimmed quotes", () => {
 test("denial deletions remove only the flagged sentences, from any part, in order", () => {
   const p = splitReport(report, "[SPLIT]");
   const s = numberSentences(p);
-  const { deleteIds } = matchViolations(s, [v("That keeps you building in private."), v("This keeps you hidden.")]);
+  const { deleteIds, unfixable } = matchViolations(s, [v("That keeps you building in private."), v("This keeps you hidden.")]);
   const out = splitReport(applyDeletions(s, deleteIds, p, { onlyOverLimit: false }), "[SPLIT]");
   assert.equal(out.narrative.split("\n\n")[1], "You kept the dropout secret. You also lose all accountability.");
-  assert.equal(out.constraint, "Your subconscious internal constraint is: being seen trying is dangerous.");
+  // The constraint's last sentence is protected (it carries the tie to the
+  // stated problem), so a flag on it goes to the rewrite instead.
+  assert.equal(out.constraint, p.constraint);
+  assert.deepEqual(unfixable.map((x) => x.quote), ["This keeps you hidden."]);
   // With the length pass default, parts within their limit are untouched.
   assert.equal(splitReport(applyDeletions(s, deleteIds, p), "[SPLIT]").narrative, p.narrative);
 });
@@ -172,4 +175,14 @@ test("dropWithdrawn ignores flags the checker takes back", () => {
   const { kept, withdrawn } = dropWithdrawn(v);
   assert.deepEqual(kept.map((x) => x.quote), ["d", "e"]);
   assert.deepEqual(withdrawn.map((x) => x.quote), ["a", "b", "c"]);
+});
+
+test("every check is told what the person was unsure about", () => {
+  const input = buildCheckInput("PERSON: yeah i think", {
+    rejected: [],
+    confirmed: [],
+    uncertain: [{ interpretation: "He believed it before Hamza said it", quote: "yeah i think" }],
+  }, "Report.");
+  assert.match(input, /UNSURE, MUST NOT BE STATED AS FACT\n- He believed it before Hamza said it \(person: "yeah i think"\)/);
+  assert.ok((CHECK_SCHEMA.properties.violations.items.properties.kind.enum as readonly string[]).includes("uncertain"));
 });

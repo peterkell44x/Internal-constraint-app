@@ -15,10 +15,11 @@
 //    loses its required opening or the word architecture, uses an absolute
 //    the person never used, or repeats another paragraph.
 //
-// It also holds two checks done by code rather than by the model: absolutes
+// It also holds three checks done by code rather than by the model: absolutes
 // (only, always, never, impossible...) in the constraint and counter belief
-// that the person never used, and narrative sentences that repeat a run of
-// words from an earlier paragraph.
+// that the person never used, narrative sentences that repeat a run of words
+// from an earlier paragraph, and whether the constraint's last sentence names
+// the person's own stated problem.
 //
 // Pure module (no imports besides types) so the tests can load it directly.
 
@@ -30,6 +31,12 @@ export const SECTION_MAX = 75;
 export const CONSTRAINT_MAX = 100;
 const CONSTRAINT_PREFIX = "Your subconscious internal constraint is:";
 const COUNTER_PREFIX = "The counter belief is:";
+
+const STOPWORDS_LIST = (
+  "a an and are as at be been but by do does for from had has have he her his i if in into is it its just me my not " +
+  "of on or our she so than that the their them then there they this to too was we were what when which who will " +
+  "with you your yours youre"
+).split(" ");
 
 /** A rewritable section: a final section, or a narrative paragraph (1-based). */
 export type SectionName = "constraint" | "counterBelief" | `paragraph${number}`;
@@ -180,6 +187,78 @@ export function findDuplicateViolations(sentences: Sentence[]): Violation[] {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// The person's stated problem
+
+export const PROBLEM_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["problem"],
+  properties: { problem: { type: "string" } },
+} as const;
+
+export function buildProblemSystem(): string {
+  return "You read a diagnostic conversation between a GUIDE and a PERSON. Early on, the guide asks what specific problem or frustration made the person come here. Find the person's answer to that question; if the guide never asked it, use the person's first answer. Return their stated problem as one short phrase of 4 to 12 words, in their own words as closely as possible, such as not having girls to banter with and have sex with, or never saving anything at the end of the month. Do not add a cause, an interpretation, or anything they did not say. Never use any dash character.";
+}
+
+export function parseProblem(text: string): string | null {
+  try {
+    const p = JSON.parse(text)?.problem;
+    return typeof p === "string" && p.trim() ? p.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+// Words too common to show that a sentence is about the person's problem.
+const FILLER = new Set([
+  ...STOPWORDS_LIST,
+  ..."about all also am any because being can cant could did didnt dont doesnt even feel feels felt get gets getting got how im ive just keep keeps kept know like make makes made more much really should something still thing things think want wants wanted wanting way why would t s".split(" "),
+]);
+
+/** A rough stem so girl and girls, or saving and save, count as the same word. */
+function stem(w: string): string {
+  if (w.length > 5 && w.endsWith("ing")) return w.slice(0, -3);
+  if (w.length > 4 && w.endsWith("ed")) return w.slice(0, -2);
+  if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss")) return w.slice(0, -1);
+  return w;
+}
+
+function contentStems(text: string): Set<string> {
+  return new Set(normalize(text).split(" ").filter((w) => w && !FILLER.has(w)).map(stem));
+}
+
+/** The meaningful words a sentence shares with the stated problem. */
+export function problemWordsShared(sentence: string, statedProblem: string): string[] {
+  const p = contentStems(statedProblem);
+  return [...contentStems(sentence)].filter((w) => p.has(w));
+}
+
+/** True when a sentence shares at least two meaningful words with the stated problem. */
+export function tiesToProblem(sentence: string, statedProblem: string): boolean {
+  return problemWordsShared(sentence, statedProblem).length >= 2;
+}
+
+/** The last sentence of a text (same splitting rule as review.ts splitSentences). */
+export function lastSentence(text: string): string {
+  return text.trim().split(/(?<=[.!?]["'”’)]?)\s+(?=\S)/).map((x) => x.trim()).filter(Boolean).at(-1) ?? "";
+}
+
+/**
+ * Code check of the constraint: a violation when its last sentence does not
+ * name the person's stated problem.
+ */
+export function findProblemViolations(parts: ReportParts, statedProblem: string | null): Violation[] {
+  if (!statedProblem || !parts.constraint.trim()) return [];
+  const last = lastSentence(parts.constraint);
+  if (tiesToProblem(last, statedProblem)) return [];
+  return [{
+    quote: last,
+    kind: "stated_problem",
+    reason: 'the constraint does not end by naming their stated problem ("' + statedProblem + '")',
+  }];
+}
+
 /**
  * Problems that make a rewritten section unusable: a missing required
  * opening, going over its word limit, dropping the word architecture when the
@@ -193,6 +272,7 @@ export function rewriteIssues(
   personWords: string,
   original = "",
   otherParagraphs: string[] = [],
+  statedProblem = "",
 ): string[] {
   const issues: string[] = [];
   const t = text.trim();
@@ -203,6 +283,9 @@ export function rewriteIssues(
   const n = countWords(t);
   if (n > limit) issues.push("over the word limit (" + n + " of " + limit + ")");
   for (const w of absolutesNotSaid(t, personWords)) issues.push('uses "' + w + '", which the person never said');
+  if (section === "constraint" && statedProblem && t && !tiesToProblem(lastSentence(t), statedProblem)) {
+    issues.push("last sentence does not name their stated problem");
+  }
   if (section.startsWith("paragraph")) {
     for (const other of otherParagraphs) {
       const run = sharedRun(other, t);
@@ -244,14 +327,15 @@ export function buildRewriteSystem(reportTitle: string, goalPhrase: string): str
   return "You are rewriting only the flagged sections of a " + reportTitle + " profile. A fact check flagged them because they state things the person rejected or never confirmed. You receive the conversation between a GUIDE and the PERSON, what the person confirmed, what the person rejected, the whole current profile for context, and for each section to rewrite its current text, the flagged sentences, and its word limit. Nothing you write besides the new section text is shown to the person.\n\n"
   + "Rules for every section you rewrite:\n"
   + "Build it only from items on the confirmed list and things the person stated, using the person's own words wherever possible.\n"
-  + "Nothing from the rejected list may appear, in any wording.\n"
+  + "Nothing from the rejected list may appear, in any wording, and nothing from the unsure list may be stated as fact.\n"
   + "Do not use only, always, never, impossible, unsafe, permanent, permanently, forever, every time, or any similar absolute unless the person used that word themselves.\n"
   + "Do not repeat a sentence or a run of words that already appears in another part of the profile.\n"
   + "Do not add a cause, consequence, or detail the person did not state.\n"
   + "Stay at or under the section's word limit.\n"
   + "Never use any dash character, not a hyphen used as a pause, not two hyphens together, not an em dash or en dash. Use a period or a comma.\n"
-  + "Write in second person, plain and direct, matching the voice of the rest of the profile.\n\n"
-  + "constraint: start with the exact words " + CONSTRAINT_PREFIX + " then name the belief inside what the person confirmed, and how it stands between them and " + goalPhrase + ", only as far as what they said supports. End the section by saying that this belief is what keeps their stated problem going, using their own words for the problem. Their stated problem is their own answer to the question about what problem or frustration made them come here. If the current text already ends this way, keep that ending. To stay inside the word limit, trim elsewhere in the section, never these closing words. This is a statement about the belief, never a promise of a result.\n"
+  + "Write in second person, plain and direct, matching the voice of the rest of the profile.\n"
+  + "Every sentence must read as normal prose that someone would actually say. Do not stitch fragments of the person's answers together or string quoted phrases into a list, and make sure every it, that, or this clearly points to something named in the same or the previous sentence.\n\n"
+  + "constraint: start with the exact words " + CONSTRAINT_PREFIX + " then name the belief inside what the person confirmed, and how it stands between them and " + goalPhrase + ", only as far as what they said supports. End the section with a sentence saying that this belief is what keeps their stated problem going, using the words given under THEIR STATED PROBLEM. That last sentence must name the problem itself, not refer to it as it or that. If the current text already ends this way, keep that ending. To stay inside the word limit, trim elsewhere in the section, never these closing words. This is a statement about the belief, never a promise of a result.\n"
   + "counterBelief: start with the exact words " + COUNTER_PREFIX + " then answer that same belief in first person, then give one action they can do and check off this week that tests the belief and produces something tangible they can point to afterward, such as a record, a number, or a message sent, not only writing down thoughts. Say which part of their stated problem the action tests. Never promise that the action or the new belief will bring a result such as peace, money, or a relationship.\n"
   + "paragraph sections (paragraph1, paragraph2 and so on): one paragraph of the narrative. Keep its role in the profile, for example the closing shift or where they stand today, state it in plain words using only what was confirmed, and if its current text uses the word architecture, keep that word once.\n\n"
   + "Rewrite only the sections listed, return each with its new text, and use the section names exactly as given.";
@@ -266,7 +350,9 @@ export function buildRewriteInput(
   audit: Audit,
   report: string,
   targets: { section: SectionName; current: string; flagged: Violation[]; limit: number }[],
+  statedProblem: string | null = null,
 ): string {
+  const unsure = formatList((audit.uncertain ?? []).map((u) => ({ text: u.interpretation, quote: u.quote })));
   const confirmed = formatList(audit.confirmed.map((c) => ({ text: c.link, quote: c.quote })));
   const rejected = formatList(audit.rejected.map((r) => ({ text: r.interpretation, quote: r.quote })));
   const sections = targets
@@ -277,6 +363,8 @@ export function buildRewriteInput(
     )
     .join("\n\n");
   return "CONVERSATION\n\n" + transcript + "\n\nCONFIRMED BY THE PERSON\n" + confirmed + "\n\nREJECTED BY THE PERSON\n" + rejected
+    + "\n\nUNSURE, MUST NOT BE STATED AS FACT\n" + unsure
+    + (statedProblem ? "\n\nTHEIR STATED PROBLEM\n" + statedProblem : "")
     + "\n\nCURRENT PROFILE\n\n" + report + "\n\nSECTIONS TO REWRITE\n\n" + sections;
 }
 
@@ -311,21 +399,58 @@ export const REPAIR_SCHEMA = {
 
 export function buildRepairSystem(): string {
   return "Some sentences were deleted from a written profile because they were inaccurate or too long. Your job is to find remaining sentences that no longer make sense on their own because they refer to something that was only introduced in a deleted sentence, for example a pronoun, that belief, this pattern, the same move, or a person or idea that is now never introduced.\n\n"
-  + "For each such sentence, give the sentence exactly as it appears in the profile, and a minimal replacement that makes it understandable on its own. Change as few words as possible. Use only facts the person stated in the conversation. Do not bring back any claim from the deleted sentences or anything on the rejected list, in any wording; if the sentence can only make sense by bringing one back, give the shortest neutral replacement instead, such as naming the person or thing in plain words. Keep any required opening words, such as Your subconscious internal constraint is: or The counter belief is:. Never use any dash character.\n\n"
+  + "Also, for each paragraph listed as having lost its last sentence, check that what remains still makes its point. If it now ends on a setup with no point, give a repair of its new last sentence that completes the point using only what the person said or confirmed.\n\n"
+  + "For each sentence to fix, give exactly one sentence, copied exactly as it appears in the current profile, never a block of several sentences; if two sentences need fixing, give two repairs. Then give a minimal replacement that makes it understandable on its own. Change as few words as possible. Use only facts the person stated in the conversation. Do not bring back any claim from the deleted sentences or anything on the rejected list, in any wording; if the sentence can only make sense by bringing one back, give the shortest neutral replacement instead, such as naming the person or thing in plain words. Keep any required opening words, such as Your subconscious internal constraint is: or The counter belief is:. Never use any dash character.\n\n"
   + "Do not list sentences that already make sense. If there are none, return an empty list.";
 }
 
-export function buildRepairInput(transcript: string, deleted: string[], rejected: string[], report: string): string {
+export function buildRepairInput(
+  transcript: string,
+  deleted: string[],
+  rejected: string[],
+  report: string,
+  lostEnding: string[] = [],
+): string {
   return "CONVERSATION\n\n" + transcript + "\n\nDELETED SENTENCES\n" + deleted.map((d) => "- " + d).join("\n")
     + "\n\nREJECTED BY THE PERSON\n" + (rejected.length ? rejected.map((r) => "- " + r).join("\n") : "(none)")
+    + "\n\nPARAGRAPHS THAT LOST THEIR LAST SENTENCE\n" + (lostEnding.length ? lostEnding.map((p) => "- " + p).join("\n") : "(none)")
     + "\n\nCURRENT PROFILE\n\n" + report;
 }
 
-const STOPWORDS = new Set(
-  ("a an and are as at be been but by do does for from had has have he her his i if in into is it its just me my not " +
-    "of on or our she so than that the their them then there they this to too was we were what when which who will " +
-    "with you your yours youre").split(" "),
-);
+/** Repairs whose original spans several sentences; they are split or retried. */
+export const RETRY_ONE_SENTENCE =
+  "\n\nIn your previous reply, some originals were blocks of several sentences, which cannot be matched. Give each repair as exactly one sentence copied from the current profile.";
+
+/**
+ * Turns a repair whose original is a block of several sentences into one
+ * repair per sentence that changed, when the replacement has the same number
+ * of sentences. Returns the repairs that could not be split that way.
+ */
+export function splitRepairs(
+  repairs: { original: string; replacement: string }[],
+  split: (text: string) => string[],
+): { repairs: { original: string; replacement: string }[]; unsplit: { original: string; replacement: string }[] } {
+  const out: { original: string; replacement: string }[] = [];
+  const unsplit: { original: string; replacement: string }[] = [];
+  for (const r of repairs) {
+    const orig = split(r.original);
+    if (orig.length <= 1) {
+      out.push(r);
+      continue;
+    }
+    const repl = split(r.replacement);
+    if (repl.length !== orig.length) {
+      unsplit.push(r);
+      continue;
+    }
+    orig.forEach((o, i) => {
+      if (normalize(o) !== normalize(repl[i])) out.push({ original: o, replacement: repl[i] });
+    });
+  }
+  return { repairs: out, unsplit };
+}
+
+const STOPWORDS = new Set(STOPWORDS_LIST);
 
 /** Three-word phrases with at least two meaningful words. */
 function phrases(text: string): Set<string> {
@@ -389,6 +514,7 @@ export function applyRepairs(
     else if (target.text.startsWith(CONSTRAINT_PREFIX) && !replacement.startsWith(CONSTRAINT_PREFIX)) reason = "dropped the required opening";
     else if (target.text.startsWith(COUNTER_PREFIX) && !replacement.startsWith(COUNTER_PREFIX)) reason = "dropped the required opening";
     else if (countWords(replacement) > countWords(target.text) + 15) reason = "replacement adds too much";
+    else if (target.locked && countWords(replacement) < countWords(target.text) - 5) reason = "cuts too much from a protected sentence";
     else {
       const back = reintroducedPhrase(target.text, replacement, forbidden);
       if (back) reason = 'brings back deleted or rejected wording ("' + back + '")';

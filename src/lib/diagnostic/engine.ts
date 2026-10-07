@@ -5,7 +5,6 @@ import Anthropic from "@anthropic-ai/sdk";
 import { DOMAINS, type DomainKey } from "./domains";
 import {
   BEGIN_MESSAGE,
-  FORCE_CLOSE_SYSTEM_PROMPT,
   HARD_CEILING,
   READY_MARKER,
   REPORT_REQUEST_MESSAGE,
@@ -26,6 +25,7 @@ import {
   type ReportParts,
   type Sentence,
   sentenceKey,
+  splitSentences,
 } from "./review";
 import {
   AUDIT_SCHEMA,
@@ -49,13 +49,18 @@ import {
   buildRepairInput,
   buildRepairSystem,
   buildRewriteInput,
+  buildProblemSystem,
   buildRewriteSystem,
   findAbsoluteViolations,
   findDuplicateViolations,
+  findProblemViolations,
   joinReport,
+  parseProblem,
   parseRepairs,
   parseRewrite,
+  PROBLEM_SCHEMA,
   REPAIR_SCHEMA,
+  RETRY_ONE_SENTENCE,
   replaceSection,
   REWRITE_SCHEMA,
   rewriteIssues,
@@ -64,8 +69,9 @@ import {
   sectionLimit,
   sectionOf,
   sectionText,
+  splitRepairs,
 } from "./repair";
-import { splitReadyMarker, splitReport, stripDashes } from "./text";
+import { dropUnansweredQuestion, splitReadyMarker, splitReport, stripDashes } from "./text";
 
 // Server-side port of the prototype's diagnostic engine. The model call
 // parameters, dash stripping, readiness marker handling, hard ceiling and
@@ -145,8 +151,18 @@ export async function startConversation(domain: DomainKey): Promise<TurnResult> 
 }
 
 /**
- * Mirrors the prototype's sendMessage(). `userTurns` is the count before this
- * answer; the returned history includes the new user turn and the reply.
+ * What the guide says after the last allowed answer. The model is not asked:
+ * told to close, it still sometimes replied with a new question the person
+ * could no longer answer.
+ */
+export const CEILING_CLOSING_LINE =
+  "I have what I need to build your profile now. Go ahead and click Generate Profile Report.";
+
+/**
+ * Mirrors the prototype's sendMessage(), except at the answer limit, where the
+ * fixed closing line replaces the model's reply. `userTurns` is the count
+ * before this answer; the returned history includes the new user turn and the
+ * reply.
  */
 export async function sendUserMessage(
   domain: DomainKey,
@@ -156,14 +172,16 @@ export async function sendUserMessage(
 ): Promise<TurnResult & { userTurns: number }> {
   const messages: ChatMessage[] = [...history, { role: "user", content: text }];
   const turns = userTurns + 1;
-  const forceClose = turns >= HARD_CEILING;
-  const system = forceClose ? FORCE_CLOSE_SYSTEM_PROMPT : buildSystemPrompt(DOMAINS[domain]);
-  const reply = await callClaude(messages, system);
-  const result = applyReply(messages, reply);
-  // At the answer limit the conversation ends whatever the reply says. Before,
-  // it ended only if the model emitted the readiness marker, so a reply
-  // without it let the chat run past the limit.
-  return { ...result, ready: result.ready || forceClose, userTurns: turns };
+  if (turns >= HARD_CEILING) {
+    return {
+      messages: [...messages, { role: "assistant", content: CEILING_CLOSING_LINE }],
+      reply: CEILING_CLOSING_LINE,
+      ready: true,
+      userTurns: turns,
+    };
+  }
+  const reply = await callClaude(messages, buildSystemPrompt(DOMAINS[domain]));
+  return { ...applyReply(messages, reply), userTurns: turns };
 }
 
 export interface Report {
@@ -283,6 +301,17 @@ async function auditConversation(transcript: string): Promise<Audit | null> {
   }
 }
 
+/** The person's stated problem as a short phrase in their words, or null if the call fails. */
+async function extractProblem(transcript: string): Promise<string | null> {
+  try {
+    const p = parseProblem(await callJSON(buildProblemSystem(), "CONVERSATION\n\n" + transcript, PROBLEM_SCHEMA));
+    return p === null ? null : stripDashes(p);
+  } catch (e) {
+    console.error("Stated problem extraction failed; the constraint's tie to it won't be checked", e);
+    return null;
+  }
+}
+
 /** Lists the report's violations of the audit, or null if the call fails. */
 async function checkReport(transcript: string, audit: Audit, report: string): Promise<Violation[] | null> {
   try {
@@ -340,6 +369,10 @@ export interface ReportChecks {
   rounds: CheckRound[];
   timedOut: boolean;
   ms: number;
+  /** The person's stated problem, extracted once from the conversation; null if that failed. */
+  statedProblem?: string | null;
+  /** The rewrite after the checks when the constraint still did not end on their stated problem. */
+  problemFix?: RewriteRecord | null;
   /** Older reports stored these at the top level; kept so they still display. */
   repairs?: CheckRound["repairs"];
   rewrite?: RewriteRecord[] | null;
@@ -359,16 +392,21 @@ export async function generateReport(
 ): Promise<Report & { checks: ReportChecks }> {
   const started = Date.now();
   const deadline = started + REPORT_TIME_BUDGET_MS;
+  // A question the person never answered (for example from a conversation
+  // closed at the answer limit before the fixed closing line) is left out.
+  history = dropUnansweredQuestion(history);
   const reportMsgs: ChatMessage[] = history.concat([{ role: "user", content: REPORT_REQUEST_MESSAGE }]);
   const hitCeiling = userTurns >= HARD_CEILING;
   const system = buildReportSystem(DOMAINS[domain]) + todayLine() + (hitCeiling ? CEILING_REPORT_NOTE : "");
   const transcript = formatTranscript(history, BEGIN_MESSAGE);
   const personWords = history.filter((m, i) => m.role === "user" && i > 0).map((m) => m.content).join("\n");
 
-  // The audit only needs the conversation, so it runs alongside the draft.
-  const [{ draft, final, lengthPasses }, audit] = await Promise.all([
+  // The audit and the stated problem only need the conversation, so they run
+  // alongside the draft.
+  const [{ draft, final, lengthPasses }, audit, statedProblem] = await Promise.all([
     draftAndCut(domain, reportMsgs, system, deadline),
     auditConversation(transcript),
+    extractProblem(transcript),
   ]);
 
   let current = final;
@@ -385,6 +423,39 @@ export async function generateReport(
     return out;
   };
   number(splitReport(final, REPORT_SPLIT_MARKER));
+
+  /** Rewrites the given sections in one call and keeps each rewrite that passes the code checks. */
+  const rewriteSections = async (
+    targets: { section: SectionName; flagged: Violation[]; current: string; limit: number }[],
+    paragraphCount: number,
+  ): Promise<{ report: string; records: RewriteRecord[] }> => {
+    const d = DOMAINS[domain];
+    const rewritten = await callFix(
+      buildRewriteSystem(d.reportTitle, d.goalPhrase),
+      buildRewriteInput(transcript, audit!, current, targets, statedProblem),
+      REWRITE_SCHEMA,
+      parseRewrite,
+    );
+    let updated = splitReport(current, REPORT_SPLIT_MARKER);
+    const records = targets.map((t) => {
+      const proposal = rewritten?.find((r) => r.section === t.section)?.text ?? null;
+      const text = proposal === null ? null : stripDashes(proposal);
+      const others = t.section.startsWith("paragraph")
+        ? updated.narrative.split(/\n\s*\n/).map((x) => x.trim()).filter((x) => x && x !== t.current)
+        : [];
+      const issues = text === null
+        ? ["no rewrite returned"]
+        : rewriteIssues(t.section, text, t.limit, personWords, t.current, others, statedProblem ?? "");
+      const accepted = issues.length === 0;
+      if (accepted && text !== null) {
+        updated = replaceSection(updated, t.section, text);
+        // A rewritten protected section stays protected.
+        number(updated);
+      }
+      return { section: t.section, label: sectionLabel(t.section, paragraphCount), flagged: t.flagged, before: t.current, after: text, accepted, issues };
+    });
+    return { report: records.some((r) => r.accepted) ? joinReport(updated) : current, records };
+  };
   const everDeleted = lengthPasses.flatMap((lp) => lp.deleted);
   const rejectedText = audit ? audit.rejected.flatMap((r) => [r.interpretation, r.quote]) : [];
 
@@ -404,9 +475,9 @@ export async function generateReport(
       // Code checks run every round, even when the check call fails.
       const absolutes = findAbsoluteViolations(sentences, personWords);
       const duplicates = findDuplicateViolations(sentences);
-      const violations = modelFlags === null && absolutes.length + duplicates.length === 0
-        ? null
-        : [...(modelFlags ?? []), ...absolutes, ...duplicates];
+      const unanchored = findProblemViolations(parts, statedProblem);
+      const codeFlags = [...absolutes, ...duplicates, ...unanchored];
+      const violations = modelFlags === null && codeFlags.length === 0 ? null : [...(modelFlags ?? []), ...codeFlags];
       const round: CheckRound = { violations, withdrawn, dismissed, deleted: [], unfixable: [] };
       rounds.push(round);
       if (violations === null || violations.length === 0) {
@@ -424,7 +495,7 @@ export async function generateReport(
       //    text; matching a duplicate by quote would also hit the first copy.
       const matched = matchViolations(sentences, modelFlags ?? []);
       const deleteIds = [...matched.deleteIds];
-      const unfixable = [...matched.unfixable, ...absolutes];
+      const unfixable = [...matched.unfixable, ...absolutes, ...unanchored];
       for (const v of duplicates) {
         const s = sentences.find((x) => x.text === v.quote);
         if (s && !s.locked) deleteIds.push(s.id);
@@ -433,18 +504,40 @@ export async function generateReport(
       const afterDelete = applyDeletions(sentences, deleteIds, parts, { onlyOverLimit: false });
       round.deleted = sentences.filter((x) => deleteIds.includes(x.id) && !afterDelete.includes(x.text)).map((x) => x.text);
       round.unfixable = unfixable;
+      // Narrative paragraphs whose last sentence was deleted but which still
+      // have others: the repair checks they still make their point.
+      const lostEnding: string[] = [];
+      const afterParts = splitReport(afterDelete, REPORT_SPLIT_MARKER);
+      const afterParas = afterParts.narrative.split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean);
+      for (const pi of new Set(sentences.filter((x) => x.part === "narrative").map((x) => x.paragraph))) {
+        const inPara = sentences.filter((x) => x.part === "narrative" && x.paragraph === pi);
+        const kept = inPara.filter((x) => afterDelete.includes(x.text));
+        if (kept.length > 0 && !afterDelete.includes(inPara.at(-1)!.text)) {
+          const para = afterParas.find((a) => a.endsWith(kept.at(-1)!.text));
+          if (para) lostEnding.push(para);
+        }
+      }
       current = afterDelete;
       everDeleted.push(...round.deleted);
 
       // 2. Repair sentences left pointing at something a deletion removed.
       if (round.deleted.length > 0) {
         parts = splitReport(current, REPORT_SPLIT_MARKER);
-        const repairs = await callFix(
-          buildRepairSystem(),
-          buildRepairInput(transcript, everDeleted, rejectedText, current),
-          REPAIR_SCHEMA,
-          parseRepairs,
-        );
+        const repairInput = buildRepairInput(transcript, everDeleted, rejectedText, current, lostEnding);
+        let repairs = await callFix(buildRepairSystem(), repairInput, REPAIR_SCHEMA, parseRepairs);
+        if (repairs !== null) {
+          // A repair must name one sentence. A block of several is split into
+          // its changed sentences; one that can't be split is asked for again,
+          // once.
+          const first = splitRepairs(repairs, splitSentences);
+          repairs = first.repairs;
+          if (first.unsplit.length > 0) {
+            const retry = await callFix(buildRepairSystem(), repairInput + RETRY_ONE_SENTENCE, REPAIR_SCHEMA, parseRepairs);
+            const second = retry === null ? { repairs: [], unsplit: first.unsplit } : splitRepairs(retry, splitSentences);
+            const have = new Set(repairs.map((r) => r.original));
+            repairs = [...repairs, ...second.repairs.filter((r) => !have.has(r.original)), ...second.unsplit];
+          }
+        }
         if (repairs === null) {
           round.repairs = null;
         } else {
@@ -463,9 +556,8 @@ export async function generateReport(
       const flaggedBySection = new Map<SectionName, Violation[]>();
       for (const v of unfixable) {
         // A code-found absolute is fixed by rewrite whether or not its sentence is locked.
-        const hits = v.kind === "absolute" || v.kind === "duplicate"
-          ? sentences.filter((x) => x.text === v.quote)
-          : findQuotedSentences(sentences, v.quote);
+        const byText = v.kind === "absolute" || v.kind === "duplicate" || v.kind === "stated_problem";
+        const hits = byText ? sentences.filter((x) => x.text === v.quote) : findQuotedSentences(sentences, v.quote);
         const sections = new Set(hits.filter((x) => x.locked || v.kind === "absolute").map(sectionOf));
         for (const sec of sections) {
           if ((rewriteCount.get(sec) ?? 0) >= 2) continue;
@@ -480,37 +572,32 @@ export async function generateReport(
           current: sectionText(parts, section),
           limit: sectionLimit(parts, section),
         }));
-        const d = DOMAINS[domain];
-        const rewritten = await callFix(
-          buildRewriteSystem(d.reportTitle, d.goalPhrase),
-          buildRewriteInput(transcript, audit, current, targets),
-          REWRITE_SCHEMA,
-          parseRewrite,
-        );
-        let updated = parts;
-        round.rewrite = targets.map((t) => {
-          rewriteCount.set(t.section, (rewriteCount.get(t.section) ?? 0) + 1);
-          const proposal = rewritten?.find((r) => r.section === t.section)?.text ?? null;
-          const text = proposal === null ? null : stripDashes(proposal);
-          const others = t.section.startsWith("paragraph")
-            ? updated.narrative.split(/\n\s*\n/).map((x) => x.trim()).filter((x) => x && x !== t.current)
-            : [];
-          const issues = text === null ? ["no rewrite returned"] : rewriteIssues(t.section, text, t.limit, personWords, t.current, others);
-          const accepted = issues.length === 0;
-          if (accepted && text !== null) {
-            updated = replaceSection(updated, t.section, text);
-            // A rewritten protected section stays protected.
-            number(updated);
-          }
-          return { section: t.section, label: sectionLabel(t.section, paragraphCount), flagged: t.flagged, before: t.current, after: text, accepted, issues };
-        });
-        if (round.rewrite.some((r) => r.accepted)) current = joinReport(updated);
+        const outcome = await rewriteSections(targets, paragraphCount);
+        round.rewrite = outcome.records;
+        for (const t of targets) rewriteCount.set(t.section, (rewriteCount.get(t.section) ?? 0) + 1);
+        current = outcome.report;
         console.info("Report section rewrite: " + round.rewrite.map((r) => r.label + (r.accepted ? " accepted" : " rejected")).join(", "));
       }
     }
   }
 
-  const checks: ReportChecks = { lengthPasses, audit, rounds, timedOut, ms: Date.now() - started };
+  // If the constraint still does not end on the person's stated problem, one
+  // more rewrite of it, supplying the phrase.
+  let problemFix: RewriteRecord | null = null;
+  if (audit) {
+    const parts = splitReport(current, REPORT_SPLIT_MARKER);
+    const unanchored = findProblemViolations(parts, statedProblem);
+    if (unanchored.length > 0) {
+      const paragraphCount = parts.narrative.split(/\n\s*\n/).filter((x) => x.trim()).length;
+      const target = { section: "constraint" as SectionName, flagged: unanchored, current: parts.constraint, limit: sectionLimit(parts, "constraint") };
+      const outcome = await rewriteSections([target], paragraphCount);
+      problemFix = outcome.records[0];
+      current = outcome.report;
+      console.info("Report stated problem rewrite: " + (problemFix.accepted ? "accepted" : "rejected"));
+    }
+  }
+
+  const checks: ReportChecks = { lengthPasses, audit, rounds, timedOut, ms: Date.now() - started, statedProblem, problemFix };
   return { raw: current, draft, ...splitReport(current, REPORT_SPLIT_MARKER), checks };
 }
 

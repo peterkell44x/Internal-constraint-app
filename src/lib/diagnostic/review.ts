@@ -148,6 +148,10 @@ export function numberSentences(r: ReportParts, alsoLocked?: Set<string>): Sente
       }
     });
   }
+  // The constraint's last sentence carries the words that tie the belief to
+  // the person's own stated problem, so it is never deleted either.
+  const lastConstraint = out.filter((s) => s.part === "constraint").at(-1);
+  if (lastConstraint) lastConstraint.locked = true;
   return out;
 }
 

@@ -59,7 +59,7 @@ function AuditView({ audit }: { audit: Audit | null }) {
           ))}
         </ul>
       )}
-      <h4>Dropped as uncertain (not treated as rejected)</h4>
+      <h4>Unsure (not treated as rejected; every check flags them if stated as fact)</h4>
       {(audit.uncertain ?? []).length === 0 ? (
         <p className="muted small">(none)</p>
       ) : (
@@ -199,6 +199,15 @@ export default function ReportInternals({ draft, checks }: Props) {
           <h3>Audit of the conversation</h3>
           <AuditView audit={c.audit ?? null} />
 
+          {c.statedProblem !== undefined && (
+            <>
+              <h3>Your stated problem</h3>
+              <p className="small">
+                {c.statedProblem === null ? "Could not be extracted, so the constraint's tie to it was not checked." : <>&ldquo;{c.statedProblem}&rdquo;</>}
+              </p>
+            </>
+          )}
+
           <h3>Length pass</h3>
           {c.lengthPasses === undefined ? (
             <p className="muted small">Not recorded for this report (made before length passes were saved).</p>
@@ -220,6 +229,14 @@ export default function ReportInternals({ draft, checks }: Props) {
             <p className="muted small">No check ran (the audit failed).</p>
           ) : (
             rounds.map((r, i) => <RoundView key={i} r={r} i={i} isLast={i === rounds.length - 1} />)
+          )}
+
+          {c.problemFix && (
+            <>
+              <h3>Stated problem tie, after the checks</h3>
+              <p className="muted small">The constraint still did not end on your stated problem, so it was rewritten once more (not re-checked).</p>
+              <RewriteView rewrite={[c.problemFix]} />
+            </>
           )}
 
           {/* Reports from the previous version kept these at the top level. */}

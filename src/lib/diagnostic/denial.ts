@@ -19,13 +19,20 @@ import type { Sentence } from "./review";
 export interface Audit {
   rejected: { interpretation: string; quote: string; answer?: "no" | "correction" | "uncertain" }[];
   confirmed: { link: string; quote: string }[];
-  /** Answers labelled uncertain with no clear denial in them; kept for the debug view, not used by the check. */
+  /** Answers labelled uncertain with no clear denial in them. Not rejections, but every check flags them if the report states them as fact. */
   uncertain?: { interpretation: string; quote: string }[];
 }
 
-// The first three come from the check call; "absolute" and "duplicate" are
-// found by code (repair.ts).
-export type ViolationKind = "rejected" | "unconfirmed_link" | "not_said" | "absolute" | "duplicate";
+// The first four come from the check call; "absolute", "duplicate" and
+// "stated_problem" are found by code (repair.ts).
+export type ViolationKind =
+  | "rejected"
+  | "unconfirmed_link"
+  | "not_said"
+  | "uncertain"
+  | "absolute"
+  | "duplicate"
+  | "stated_problem";
 
 export interface Violation {
   quote: string;
@@ -90,7 +97,7 @@ export const CHECK_SCHEMA = {
         required: ["quote", "kind", "reason", "stands_behind"],
         properties: {
           quote: str,
-          kind: { type: "string", enum: ["rejected", "unconfirmed_link", "not_said"] },
+          kind: { type: "string", enum: ["rejected", "unconfirmed_link", "not_said", "uncertain"] },
           reason: str,
           stands_behind: { type: "boolean" },
         },
@@ -112,24 +119,29 @@ export function buildAuditInput(transcript: string): string {
 }
 
 export function buildCheckSystem(): string {
-  return "You are fact checking a written profile against the diagnostic conversation it was written from, between a GUIDE and a PERSON. You receive the conversation, an audit listing the interpretations the person rejected and the links the person confirmed, and the profile. Nothing you write is shown to the person.\n\n"
+  return "You are fact checking a written profile against the diagnostic conversation it was written from, between a GUIDE and a PERSON. You receive the conversation, an audit listing the interpretations the person rejected, the links the person confirmed, and the things the person was unsure about, and the profile. Nothing you write is shown to the person.\n\n"
   + "List a violation for each place where the profile does one of these:\n"
   + "rejected: states, implies, or rewords anything on the rejected list. Only items on that list count as rejected; a question the person answered with idk or uncertainty is not a rejection.\n"
   + "unconfirmed_link: presents a link, cause, pattern, or same move between separate things the person said, or turns one thing they said or did into a general pattern of how they operate, when that link is not on the confirmed list and the person did not state it themselves.\n"
-  + "not_said: states as fact something about the person or anyone in their life that the person never said, such as an event, number, feeling, motive, or a consequence that rests on a fact about their situation they never stated.\n\n"
+  + "not_said: states as fact something about the person or anyone in their life that the person never said, such as an event, number, feeling, motive, or a consequence that rests on a fact about their situation they never stated.\n"
+  + "uncertain: states as fact, in any wording, anything on the uncertain list. The person was unsure about these, for example they answered yeah i think, maybe, or idk, so the profile must not present them as true, as something about them, or as the reason for something.\n\n"
   + "Before flagging a number, amount, age, or duration, read every message from the person. Numbers can be written as digits or words and ranges can be written as 4-5 or four to five; these mean the same thing.\n\n"
   + "Do not flag: things the person said, links on the confirmed list and how they play out, what a single thing the person said means in their own framing, the suggested action in the counter belief section, or wording and style. When in doubt whether the person said something, check the conversation.\n\n"
   + "For each violation, quote the exact sentence or clause from the profile and give a short reason. Then set stands_behind: true only if, after checking the conversation, you still hold that it is a violation. If while writing the reason you find the person did say it, or you change your mind, leave the item out, or set stands_behind to false. Items with stands_behind false are ignored. If there are none, return an empty list.";
 }
 
-function formatAudit(a: Audit): string {
+export function formatAudit(a: Audit): string {
   const rejected = a.rejected.length
     ? a.rejected.map((r) => "- " + r.interpretation + " (person: \"" + r.quote + "\")").join("\n")
     : "(none)";
   const confirmed = a.confirmed.length
     ? a.confirmed.map((c) => "- " + c.link + " (person: \"" + c.quote + "\")").join("\n")
     : "(none)";
-  return "REJECTED BY THE PERSON\n" + rejected + "\n\nCONFIRMED BY THE PERSON\n" + confirmed;
+  const uncertain = a.uncertain?.length
+    ? a.uncertain.map((u) => "- " + u.interpretation + " (person: \"" + u.quote + "\")").join("\n")
+    : "(none)";
+  return "REJECTED BY THE PERSON\n" + rejected + "\n\nCONFIRMED BY THE PERSON\n" + confirmed
+    + "\n\nUNSURE, MUST NOT BE STATED AS FACT\n" + uncertain;
 }
 
 export function buildCheckInput(transcript: string, audit: Audit, report: string): string {

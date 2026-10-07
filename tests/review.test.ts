@@ -63,7 +63,9 @@ test("numberSentences locks section openings and the architecture sentence", () 
   assert.ok(locked.includes("That is the shift."));
   // The whole counter belief section (3 sentences) is locked, so its action step stays.
   assert.ok(locked.includes("Take one day off this week."));
-  assert.equal(locked.length, 6);
+  // The constraint's last sentence, which ties it to the stated problem.
+  assert.ok(locked.includes("This keeps you working."));
+  assert.equal(locked.length, 7);
 });
 
 test("parseDeletions reads numbers from the delete block only", () => {

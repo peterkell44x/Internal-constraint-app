@@ -8,13 +8,17 @@ import {
   absolutesNotSaid,
   findAbsoluteViolations,
   findDuplicateViolations,
+  findProblemViolations,
+  lastSentence,
   rewriteIssues,
   sharedRun,
+  splitRepairs,
+  tiesToProblem,
   sectionLimit,
   sectionOf,
   sectionText,
 } from "../src/lib/diagnostic/repair.ts";
-import { numberSentences } from "../src/lib/diagnostic/review.ts";
+import { numberSentences, splitSentences } from "../src/lib/diagnostic/review.ts";
 import { splitReport } from "../src/lib/diagnostic/text.ts";
 
 const raw =
@@ -151,4 +155,58 @@ test("rewriteIssues rejects a paragraph rewrite that repeats another paragraph",
   const issues = rewriteIssues("paragraph5", "Disagreeing with it and being free of it are two different things, so act.", 60, "", "", [other]);
   assert.ok(issues.some((i) => i.startsWith("repeats")));
   assert.deepEqual(rewriteIssues("paragraph5", "The shift is to log what you did.", 60, "", "", [other]), []);
+});
+
+const problem = "not having girls to banter with and have sex with";
+
+test("tiesToProblem needs two meaningful words in common, counting girl and girls as one", () => {
+  assert.ok(tiesToProblem("This is why you keep stopping yourself from having sex with girls.", problem));
+  assert.ok(tiesToProblem("That belief keeps you from the banter you want with a girl.", problem));
+  // The garbled rewrite that shipped: only filler in common.
+  assert.ok(!tiesToProblem("That belief is what keeps you not having it but wanting it, not big and strong enough.", problem));
+  assert.ok(!tiesToProblem("This keeps you from getting girls.", problem));
+});
+
+test("findProblemViolations checks the constraint's last sentence only", () => {
+  const ok = splitReport("N.\n\n[SPLIT]\n\nYour subconscious internal constraint is: you are not big enough. This is why you keep missing the banter and sex with girls you want.\n\n[SPLIT]\n\nThe counter belief is: Y.", "[SPLIT]");
+  assert.deepEqual(findProblemViolations(ok, problem), []);
+  const bad = splitReport("N.\n\n[SPLIT]\n\nYour subconscious internal constraint is: girls want banter and sex with big guys. So you stop messaging.\n\n[SPLIT]\n\nThe counter belief is: Y.", "[SPLIT]");
+  const v = findProblemViolations(bad, problem);
+  assert.equal(v.length, 1);
+  assert.equal(v[0].quote, "So you stop messaging.");
+  assert.equal(v[0].kind, "stated_problem");
+  assert.deepEqual(findProblemViolations(bad, null), []);
+  assert.equal(lastSentence("One. Two? Three."), "Three.");
+});
+
+test("rewriteIssues rejects a constraint rewrite whose last sentence drops the stated problem", () => {
+  const without = "Your subconscious internal constraint is: you are not big enough. That keeps you not having it.";
+  const withIt = "Your subconscious internal constraint is: you are not big enough. That is why you keep missing out on banter and sex with girls.";
+  assert.ok(rewriteIssues("constraint", without, 100, "", "", [], problem).includes("last sentence does not name their stated problem"));
+  assert.deepEqual(rewriteIssues("constraint", withIt, 100, "", "", [], problem), []);
+  // Not checked for other sections, or when there is no stated problem.
+  assert.deepEqual(rewriteIssues("constraint", without, 100, ""), []);
+});
+
+test("splitRepairs turns a block into one repair per changed sentence, and returns blocks it cannot split", () => {
+  const block = {
+    original: "You gave her your number. She responded. She had already accepted you.",
+    replacement: "You gave her your number. She responded. She had already shown interest in you.",
+  };
+  const uneven = { original: "One here. Two here.", replacement: "One and two here." };
+  const single = { original: "A sentence.", replacement: "A better sentence." };
+  const out = splitRepairs([block, uneven, single], splitSentences);
+  assert.deepEqual(out.repairs, [
+    { original: "She had already accepted you.", replacement: "She had already shown interest in you." },
+    single,
+  ]);
+  assert.deepEqual(out.unsplit, [uneven]);
+});
+
+test("applyRepairs will not cut a protected sentence down", () => {
+  // The action sentence, 10 words, cut to 3.
+  const target = byStart("This week");
+  const out = applyRepairs(parts, sentences, [{ original: target.text, replacement: "This week, rest." }]);
+  assert.equal(out.applied.length, 0);
+  assert.equal(out.skipped[0].reason, "cuts too much from a protected sentence");
 });
