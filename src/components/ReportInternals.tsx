@@ -145,6 +145,69 @@ export default function ReportInternals({ draft, checks }: Props) {
               </div>
             ))
           )}
+
+          <h3>Reference repair</h3>
+          {c.repairs === undefined ? (
+            <p className="muted small">Not needed (nothing was deleted), or not recorded for this report.</p>
+          ) : c.repairs === null ? (
+            <p className="muted small">The repair call failed.</p>
+          ) : c.repairs.applied.length + c.repairs.skipped.length === 0 ? (
+            <p className="muted small">No sentence referred to anything deleted.</p>
+          ) : (
+            <ul className="internals-list">
+              {c.repairs.applied.map((r, i) => (
+                <li key={"a" + i}>
+                  <span className="pill">repaired</span> &ldquo;{r.original}&rdquo;
+                  <div className="small">&rarr; &ldquo;{r.replacement}&rdquo;</div>
+                </li>
+              ))}
+              {c.repairs.skipped.map((r, i) => (
+                <li key={"s" + i}>
+                  <span className="pill">skipped: {r.reason}</span> &ldquo;{r.original}&rdquo;
+                  <div className="muted small">Proposed: &ldquo;{r.replacement}&rdquo;</div>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <h3>Targeted section rewrite</h3>
+          {!c.rewrite ? (
+            <p className="muted small">Not needed (no protected section was still flagged), or not recorded for this report.</p>
+          ) : (
+            c.rewrite.map((r, i) => (
+              <div key={i} className="internals-round">
+                <p className="small">
+                  <strong>{r.section === "counterBelief" ? "Counter belief" : r.section === "shift" ? "Final paragraph" : "Constraint"}:</strong>{" "}
+                  {r.accepted ? "rewritten" : "rewrite rejected, original kept"}
+                  {r.issues.length > 0 && <> ({r.issues.join("; ")})</>}
+                </p>
+                <p className="small">Flagged:</p>
+                <ViolationList items={r.flagged} />
+                <p className="small">Before:</p>
+                <pre className="internals-pre">{r.before}</pre>
+                {r.after !== null && (
+                  <>
+                    <p className="small">{r.accepted ? "After:" : "Proposed (not used):"}</p>
+                    <pre className="internals-pre">{r.after}</pre>
+                  </>
+                )}
+              </div>
+            ))
+          )}
+
+          <h3>Final check</h3>
+          {!c.final ? (
+            <p className="muted small">Not run (nothing was repaired or rewritten).</p>
+          ) : c.final.violations === null ? (
+            <p className="muted small">The final check call failed.</p>
+          ) : c.final.violations.length === 0 ? (
+            <p className="small">Clean.</p>
+          ) : (
+            <>
+              <p className="small">Still flagged in the report as shipped:</p>
+              <ViolationList items={c.final.violations} />
+            </>
+          )}
         </>
       )}
 

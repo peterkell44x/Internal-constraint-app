@@ -32,12 +32,31 @@ import {
   buildCheckInput,
   buildCheckSystem,
   CHECK_SCHEMA,
+  findQuotedSentences,
   formatTranscript,
   matchViolations,
   parseAudit,
   parseViolations,
   type Violation,
 } from "./denial";
+import {
+  applyRepairs,
+  buildRepairInput,
+  buildRepairSystem,
+  buildRewriteInput,
+  buildRewriteSystem,
+  joinReport,
+  parseRepairs,
+  parseRewrite,
+  REPAIR_SCHEMA,
+  replaceSection,
+  REWRITE_SCHEMA,
+  rewriteIssues,
+  type SectionName,
+  sectionLimit,
+  sectionOf,
+  sectionText,
+} from "./repair";
 import { splitReadyMarker, splitReport, stripDashes } from "./text";
 
 // Server-side port of the prototype's diagnostic engine. The model call
@@ -266,8 +285,11 @@ async function checkReport(transcript: string, audit: Audit, report: string): Pr
 const CHECK_MAX_TOKENS = 4000;
 
 // Check-and-delete rounds. Each checks the current report and deletes the
-// sentences it flags; later rounds catch anything the first check missed.
-const MAX_CHECK_ROUNDS = 3;
+// sentences it flags; the second catches anything the first missed.
+const MAX_CHECK_ROUNDS = 2;
+
+// The reference-repair and section-rewrite replies are short.
+const FIX_MAX_TOKENS = 3000;
 
 // After this long, no new length pass or check round starts and the report
 // ships as it stands, keeping generation well inside hosting time limits.
@@ -278,13 +300,20 @@ export interface ReportChecks {
   lengthPasses: LengthPass[];
   audit: Audit | null;
   rounds: { violations: Violation[] | null; deleted: string[]; unfixable: Violation[] }[];
+  /** Sentences repaired because they referred to something that was deleted. */
+  repairs?: { applied: { original: string; replacement: string }[]; skipped: { original: string; replacement: string; reason: string }[] } | null;
+  /** The one targeted rewrite of flagged protected sections. */
+  rewrite?: { section: SectionName; flagged: Violation[]; before: string; after: string | null; accepted: boolean; issues: string[] }[] | null;
+  /** The check after repairs and the rewrite; whatever it still flags ships. */
+  final?: { violations: Violation[] | null } | null;
   timedOut: boolean;
   ms: number;
 }
 
 /**
- * Mirrors the prototype's report button handler, followed by the length pass
- * and the delete-only denial check.
+ * Mirrors the prototype's report button handler, followed by the length pass,
+ * the delete-only denial check, reference repair, and a targeted rewrite of
+ * any protected section that is still flagged.
  */
 export async function generateReport(
   domain: DomainKey,
@@ -297,6 +326,7 @@ export async function generateReport(
   const hitCeiling = userTurns >= HARD_CEILING;
   const system = buildReportSystem(DOMAINS[domain]) + todayLine() + (hitCeiling ? CEILING_REPORT_NOTE : "");
   const transcript = formatTranscript(history, BEGIN_MESSAGE);
+  const personWords = history.filter((m, i) => m.role === "user" && i > 0).map((m) => m.content).join("\n");
 
   // The audit only needs the conversation, so it runs alongside the draft.
   const [{ draft, final, lengthPasses }, audit] = await Promise.all([
@@ -307,6 +337,7 @@ export async function generateReport(
   let current = final;
   let timedOut = false;
   const rounds: ReportChecks["rounds"] = [];
+  const checks: ReportChecks = { lengthPasses, audit, rounds, timedOut, ms: 0 };
   if (audit) {
     for (let round = 1; round <= MAX_CHECK_ROUNDS; round++) {
       if (round > 1 && Date.now() > deadline) {
@@ -334,8 +365,102 @@ export async function generateReport(
       if (revised === current) break;
       current = revised;
     }
+
+    let changed = false;
+
+    // Repair sentences left pointing at something a deletion removed.
+    const allDeleted = [...lengthPasses.flatMap((lp) => lp.deleted), ...rounds.flatMap((r) => r.deleted)];
+    if (allDeleted.length > 0) {
+      const parts = splitReport(current, REPORT_SPLIT_MARKER);
+      const repairs = await callFix(buildRepairSystem(), buildRepairInput(transcript, allDeleted, current), REPAIR_SCHEMA, parseRepairs);
+      if (repairs === null) {
+        checks.repairs = null;
+      } else {
+        const cleaned = repairs.map((r) => ({ original: r.original, replacement: stripDashes(r.replacement) }));
+        const outcome = applyRepairs(parts, numberSentences(parts), cleaned);
+        checks.repairs = { applied: outcome.applied, skipped: outcome.skipped };
+        if (outcome.applied.length > 0) {
+          current = joinReport(outcome.report);
+          changed = true;
+        }
+        console.info("Report reference repair: " + outcome.applied.length + " applied, " + outcome.skipped.length + " skipped");
+      }
+    }
+
+    // One targeted rewrite of any protected section the last round still flags.
+    const lastFlags = rounds.at(-1)?.unfixable ?? [];
+    if (lastFlags.length > 0) {
+      const parts = splitReport(current, REPORT_SPLIT_MARKER);
+      const sentences = numberSentences(parts);
+      const flaggedBySection = new Map<SectionName, Violation[]>();
+      for (const v of lastFlags) {
+        const sections = new Set(findQuotedSentences(sentences, v.quote).map((s) => sectionOf(s, sentences)));
+        for (const sec of sections) if (sec) flaggedBySection.set(sec, [...(flaggedBySection.get(sec) ?? []), v]);
+      }
+      if (flaggedBySection.size > 0) {
+        const targets = [...flaggedBySection].map(([section, flagged]) => ({
+          section,
+          flagged,
+          current: sectionText(parts, section),
+          limit: sectionLimit(parts, section),
+        }));
+        const d = DOMAINS[domain];
+        const rewritten = await callFix(
+          buildRewriteSystem(d.reportTitle, d.goalPhrase),
+          buildRewriteInput(transcript, audit, current, targets),
+          REWRITE_SCHEMA,
+          parseRewrite,
+        );
+        let updated = parts;
+        checks.rewrite = targets.map((t) => {
+          const proposal = rewritten?.find((r) => r.section === t.section)?.text ?? null;
+          const text = proposal === null ? null : stripDashes(proposal);
+          const issues = text === null ? ["no rewrite returned"] : rewriteIssues(t.section, text, t.limit, personWords);
+          const accepted = issues.length === 0;
+          if (accepted && text !== null) updated = replaceSection(updated, t.section, text);
+          return { section: t.section, flagged: t.flagged, before: t.current, after: text, accepted, issues };
+        });
+        if (checks.rewrite.some((r) => r.accepted)) {
+          current = joinReport(updated);
+          changed = true;
+        }
+        console.info(
+          "Report section rewrite: " + checks.rewrite.map((r) => r.section + (r.accepted ? " accepted" : " rejected")).join(", "),
+        );
+      }
+    }
+
+    // Check once more after repairs or the rewrite; what it flags ships and is
+    // shown in the debug view.
+    if (changed) {
+      checks.final = { violations: await checkReport(transcript, audit, current) };
+      console.info("Report final check: " + (checks.final.violations?.length ?? "failed") + " violation(s)");
+    }
   }
 
-  const checks: ReportChecks = { lengthPasses, audit, rounds, timedOut, ms: Date.now() - started };
+  checks.timedOut = timedOut;
+  checks.ms = Date.now() - started;
   return { raw: current, draft, ...splitReport(current, REPORT_SPLIT_MARKER), checks };
+}
+
+/** A structured call for the repair and rewrite steps; null if it fails. */
+async function callFix<T>(
+  system: string,
+  input: string,
+  schema: Record<string, unknown>,
+  parse: (text: string) => T | null,
+): Promise<T | null> {
+  try {
+    const response = await getClient().messages.create({
+      model: MODEL,
+      max_tokens: FIX_MAX_TOKENS,
+      system,
+      messages: [{ role: "user", content: input }],
+      output_config: { format: { type: "json_schema", schema } },
+    });
+    return parse(response.content.map((b) => (b.type === "text" ? b.text : "")).join(""));
+  } catch (e) {
+    console.error("Report fix call failed; continuing without it", e);
+    return null;
+  }
 }

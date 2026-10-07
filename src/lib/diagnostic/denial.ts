@@ -188,39 +188,40 @@ export interface ViolationMatch {
 }
 
 /**
- * Finds the sentences each violation quotes. A quote can be part of one
- * sentence or span several. Protected sentences are never selected; a
- * violation that touches one, or whose quote can't be found, is unfixable.
+ * The sentences a quote points at. A quote can be part of one sentence or span
+ * several; trimmed or slightly reworded quotes fall back to their opening or
+ * closing words. Empty when the quote can't be found.
+ */
+export function findQuotedSentences(sentences: Sentence[], quote: string): Sentence[] {
+  const q = normalize(quote);
+  if (!q) return [];
+  const norm = sentences.map((s) => ({ s, t: normalize(s.text) }));
+  // The quote is inside a sentence, or a whole sentence (of a few words or
+  // more) is inside the quote.
+  let hits = norm.filter(({ t }) => t.includes(q) || (words(t).length >= 4 && q.includes(t)));
+  if (hits.length === 0) {
+    const qw = words(q);
+    if (qw.length >= 8) {
+      const head = qw.slice(0, 8).join(" ");
+      const tail = qw.slice(-8).join(" ");
+      hits = norm.filter(({ t }) => t.includes(head) || t.includes(tail));
+    }
+  }
+  return hits.map(({ s }) => s);
+}
+
+/**
+ * Finds the sentences each violation quotes. Protected sentences are never
+ * selected; a violation that touches one, or whose quote can't be found, is
+ * unfixable by deletion.
  */
 export function matchViolations(sentences: Sentence[], violations: Violation[]): ViolationMatch {
   const deleteIds = new Set<number>();
   const unfixable: Violation[] = [];
-  const norm = sentences.map((s) => ({ s, t: normalize(s.text) }));
   for (const v of violations) {
-    const q = normalize(v.quote);
-    if (!q) {
-      unfixable.push(v);
-      continue;
-    }
-    // The quote is inside a sentence, or a whole sentence (of a few words or
-    // more) is inside the quote.
-    let hits = norm.filter(({ t }) => t.includes(q) || (words(t).length >= 4 && q.includes(t)));
-    if (hits.length === 0) {
-      // Fall back to the quote's opening or closing words, for quotes that
-      // were trimmed or slightly reworded.
-      const qw = words(q);
-      if (qw.length >= 8) {
-        const head = qw.slice(0, 8).join(" ");
-        const tail = qw.slice(-8).join(" ");
-        hits = norm.filter(({ t }) => t.includes(head) || t.includes(tail));
-      }
-    }
-    if (hits.length === 0) {
-      unfixable.push(v);
-      continue;
-    }
-    if (hits.some(({ s }) => s.locked)) unfixable.push(v);
-    for (const { s } of hits) if (!s.locked) deleteIds.add(s.id);
+    const hits = findQuotedSentences(sentences, v.quote);
+    if (hits.length === 0 || hits.some((s) => s.locked)) unfixable.push(v);
+    for (const s of hits) if (!s.locked) deleteIds.add(s.id);
   }
   return { deleteIds: [...deleteIds], unfixable };
 }
