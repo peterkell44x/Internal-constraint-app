@@ -140,6 +140,12 @@ function RoundView({ r, i, isLast }: { r: CheckRound; i: number; isLast: boolean
         {isLast && r.violations && r.violations.length > 0 && !fixed && " (last check: these shipped)"}
       </p>
       {r.violations && r.violations.length > 0 && <ViolationList items={r.violations} />}
+      {(r.withdrawn ?? []).length > 0 && (
+        <>
+          <p className="small">Withdrawn by the checker (ignored):</p>
+          <ViolationList items={r.withdrawn ?? []} />
+        </>
+      )}
       {(r.dismissed ?? []).length > 0 && (
         <>
           <p className="small">Dismissed (numbers you did say, in another form):</p>

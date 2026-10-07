@@ -12,8 +12,13 @@
 //    and final paragraphs) can't be deleted, so a violation in one is fixed by
 //    rewriting just the section or paragraph that holds it, from the confirmed
 //    and rejected lists. The code rejects a rewrite that breaks the word limit,
-//    loses its required opening or the word architecture, or uses an absolute
-//    the person never used.
+//    loses its required opening or the word architecture, uses an absolute
+//    the person never used, or repeats another paragraph.
+//
+// It also holds two checks done by code rather than by the model: absolutes
+// (only, always, never, impossible...) in the constraint and counter belief
+// that the person never used, and narrative sentences that repeat a run of
+// words from an earlier paragraph.
 //
 // Pure module (no imports besides types) so the tests can load it directly.
 
@@ -22,6 +27,7 @@ import type { ReportParts, Sentence } from "./review";
 
 export const NARRATIVE_MAX = 260;
 export const SECTION_MAX = 75;
+export const CONSTRAINT_MAX = 100;
 const CONSTRAINT_PREFIX = "Your subconscious internal constraint is:";
 const COUNTER_PREFIX = "The counter belief is:";
 
@@ -61,7 +67,8 @@ export function sectionText(parts: ReportParts, section: SectionName): string {
 
 /** The word limit for a rewritten section; a paragraph shares the narrative's limit. */
 export function sectionLimit(parts: ReportParts, section: SectionName): number {
-  if (section === "constraint" || section === "counterBelief") return SECTION_MAX;
+  if (section === "constraint") return CONSTRAINT_MAX;
+  if (section === "counterBelief") return SECTION_MAX;
   const rest = countWords(parts.narrative) - countWords(sectionText(parts, section));
   return Math.max(15, NARRATIVE_MAX - rest);
 }
@@ -89,12 +96,95 @@ export function joinReport(p: ReportParts): string {
   return [p.narrative, p.constraint, p.counterBelief].join("\n\n[SPLIT]\n\n");
 }
 
-const ABSOLUTES = ["only", "always", "never"];
+// Absolute words the profile may use only if the person used them. Forms in
+// one entry count as the same word: if the person said permanent, the profile
+// may say permanently.
+const ABSOLUTES: { label: string; forms: string[] }[] = [
+  { label: "only", forms: ["only"] },
+  { label: "always", forms: ["always"] },
+  { label: "never", forms: ["never"] },
+  { label: "impossible", forms: ["impossible"] },
+  { label: "unsafe", forms: ["unsafe"] },
+  { label: "permanent", forms: ["permanent", "permanently"] },
+  { label: "forever", forms: ["forever"] },
+  { label: "every time", forms: ["every time", "everytime"] },
+];
+
+/** The absolutes in a text that the person never used, by label. */
+export function absolutesNotSaid(text: string, personWords: string): string[] {
+  const t = " " + normalize(text) + " ";
+  const said = " " + normalize(personWords) + " ";
+  return ABSOLUTES.filter(
+    (a) => a.forms.some((f) => t.includes(" " + f + " ")) && !a.forms.some((f) => said.includes(" " + f + " ")),
+  ).map((a) => a.label);
+}
+
+/**
+ * Code check of the constraint and counter belief: one violation per sentence
+ * that uses an absolute the person never used.
+ */
+export function findAbsoluteViolations(sentences: Sentence[], personWords: string): Violation[] {
+  const out: Violation[] = [];
+  for (const s of sentences) {
+    if (s.part !== "constraint" && s.part !== "counterBelief") continue;
+    const found = absolutesNotSaid(s.text, personWords);
+    if (found.length > 0) {
+      out.push({ quote: s.text, kind: "absolute", reason: "uses " + found.map((w) => '"' + w + '"').join(", ") + ", which the person never said" });
+    }
+  }
+  return out;
+}
+
+// A sentence repeats another when they share this many words in a row, at
+// least DUPLICATE_MIN_CONTENT of them meaningful (not words like the, it, and).
+const DUPLICATE_RUN = 6;
+const DUPLICATE_MIN_CONTENT = 3;
+
+/** The longest run of words two texts share, if it is long enough to count as a repeat; else null. */
+export function sharedRun(a: string, b: string): string | null {
+  const aw = normalize(a).split(" ").filter(Boolean);
+  const bw = normalize(b).split(" ").filter(Boolean);
+  const grams = new Set<string>();
+  for (let i = 0; i + DUPLICATE_RUN <= aw.length; i++) grams.add(aw.slice(i, i + DUPLICATE_RUN).join(" "));
+  let best: string[] | null = null;
+  for (let j = 0; j + DUPLICATE_RUN <= bw.length; j++) {
+    if (!grams.has(bw.slice(j, j + DUPLICATE_RUN).join(" "))) continue;
+    // Extend the match as far as both texts keep agreeing.
+    let end = j + DUPLICATE_RUN;
+    while (end < bw.length && grams.has(bw.slice(end - DUPLICATE_RUN + 1, end + 1).join(" "))) end++;
+    const run = bw.slice(j, end);
+    if (run.filter((w) => !STOPWORDS.has(w)).length < DUPLICATE_MIN_CONTENT) continue;
+    if (!best || run.length > best.length) best = run;
+  }
+  return best ? best.join(" ") : null;
+}
+
+/**
+ * Code check of the narrative: each sentence that repeats a run of words from
+ * a sentence in an earlier paragraph. The first one stays; the later one is
+ * flagged, to be deleted, or rewritten if it is protected.
+ */
+export function findDuplicateViolations(sentences: Sentence[]): Violation[] {
+  const narrative = sentences.filter((s) => s.part === "narrative");
+  const out: Violation[] = [];
+  for (const later of narrative) {
+    for (const earlier of narrative) {
+      if (earlier.paragraph >= later.paragraph) continue;
+      const run = sharedRun(earlier.text, later.text);
+      if (run) {
+        out.push({ quote: later.text, kind: "duplicate", reason: 'repeats "' + run + '" from paragraph ' + (earlier.paragraph + 1) });
+        break;
+      }
+    }
+  }
+  return out;
+}
 
 /**
  * Problems that make a rewritten section unusable: a missing required
  * opening, going over its word limit, dropping the word architecture when the
- * original had it, or an absolute (only, always, never) the person never used.
+ * original had it, an absolute (only, always, never, impossible...) the person
+ * never used, or for a paragraph, repeating a run of words from another one.
  */
 export function rewriteIssues(
   section: SectionName,
@@ -102,6 +192,7 @@ export function rewriteIssues(
   limit: number,
   personWords: string,
   original = "",
+  otherParagraphs: string[] = [],
 ): string[] {
   const issues: string[] = [];
   const t = text.trim();
@@ -111,9 +202,15 @@ export function rewriteIssues(
   if (section === "counterBelief" && !t.startsWith(COUNTER_PREFIX)) issues.push("missing the required opening words");
   const n = countWords(t);
   if (n > limit) issues.push("over the word limit (" + n + " of " + limit + ")");
-  const said = new Set(normalize(personWords).split(" "));
-  for (const w of ABSOLUTES) {
-    if (new RegExp("\\b" + w + "\\b", "i").test(t) && !said.has(w)) issues.push('uses "' + w + '", which the person never said');
+  for (const w of absolutesNotSaid(t, personWords)) issues.push('uses "' + w + '", which the person never said');
+  if (section.startsWith("paragraph")) {
+    for (const other of otherParagraphs) {
+      const run = sharedRun(other, t);
+      if (run) {
+        issues.push('repeats "' + run + '" from another paragraph');
+        break;
+      }
+    }
   }
   return issues;
 }
@@ -148,13 +245,14 @@ export function buildRewriteSystem(reportTitle: string, goalPhrase: string): str
   + "Rules for every section you rewrite:\n"
   + "Build it only from items on the confirmed list and things the person stated, using the person's own words wherever possible.\n"
   + "Nothing from the rejected list may appear, in any wording.\n"
-  + "Do not use only, always, never, or any similar absolute unless the person used that word themselves.\n"
+  + "Do not use only, always, never, impossible, unsafe, permanent, permanently, forever, every time, or any similar absolute unless the person used that word themselves.\n"
+  + "Do not repeat a sentence or a run of words that already appears in another part of the profile.\n"
   + "Do not add a cause, consequence, or detail the person did not state.\n"
   + "Stay at or under the section's word limit.\n"
   + "Never use any dash character, not a hyphen used as a pause, not two hyphens together, not an em dash or en dash. Use a period or a comma.\n"
   + "Write in second person, plain and direct, matching the voice of the rest of the profile.\n\n"
-  + "constraint: start with the exact words " + CONSTRAINT_PREFIX + " then name the belief inside what the person confirmed, and how it stands between them and " + goalPhrase + ", only as far as what they said supports.\n"
-  + "counterBelief: start with the exact words " + COUNTER_PREFIX + " then answer that same belief in first person, then give one action they can do and check off this week that tests the belief and produces something tangible they can point to afterward, such as a record, a number, or a message sent, not only writing down thoughts.\n"
+  + "constraint: start with the exact words " + CONSTRAINT_PREFIX + " then name the belief inside what the person confirmed, and how it stands between them and " + goalPhrase + ", only as far as what they said supports. End the section by saying that this belief is what keeps their stated problem going, using their own words for the problem. Their stated problem is their own answer to the question about what problem or frustration made them come here. If the current text already ends this way, keep that ending. To stay inside the word limit, trim elsewhere in the section, never these closing words. This is a statement about the belief, never a promise of a result.\n"
+  + "counterBelief: start with the exact words " + COUNTER_PREFIX + " then answer that same belief in first person, then give one action they can do and check off this week that tests the belief and produces something tangible they can point to afterward, such as a record, a number, or a message sent, not only writing down thoughts. Say which part of their stated problem the action tests. Never promise that the action or the new belief will bring a result such as peace, money, or a relationship.\n"
   + "paragraph sections (paragraph1, paragraph2 and so on): one paragraph of the narrative. Keep its role in the profile, for example the closing shift or where they stand today, state it in plain words using only what was confirmed, and if its current text uses the word architecture, keep that word once.\n\n"
   + "Rewrite only the sections listed, return each with its new text, and use the section names exactly as given.";
 }

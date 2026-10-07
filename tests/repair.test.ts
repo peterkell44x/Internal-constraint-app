@@ -5,7 +5,11 @@ import {
   applyRepairs,
   joinReport,
   replaceSection,
+  absolutesNotSaid,
+  findAbsoluteViolations,
+  findDuplicateViolations,
   rewriteIssues,
+  sharedRun,
   sectionLimit,
   sectionOf,
   sectionText,
@@ -33,7 +37,8 @@ test("sectionOf maps sentences to the final sections or their narrative paragrap
 });
 
 test("sectionLimit gives a paragraph whatever the narrative has left", () => {
-  assert.equal(sectionLimit(parts, "constraint"), 75);
+  assert.equal(sectionLimit(parts, "constraint"), 100);
+  assert.equal(sectionLimit(parts, "counterBelief"), 75);
   const narrativeWords = parts.narrative.split(/\s+/).filter(Boolean).length;
   const shiftWords = sectionText(parts, "paragraph5").split(/\s+/).length;
   assert.equal(sectionLimit(parts, "paragraph5"), 260 - (narrativeWords - shiftWords));
@@ -92,4 +97,58 @@ test("a repair that brings back deleted or rejected wording is refused", async (
   ], deleted);
   assert.equal(out.applied.length, 0);
   assert.match(out.skipped[0].reason, /brings back deleted or rejected wording/);
+});
+
+test("absolutesNotSaid covers the extended list and allows words the person used", () => {
+  const person = "i always restart. it felt unsafe to stop";
+  assert.deepEqual(
+    absolutesNotSaid("It is structurally impossible, permanently unsafe, forever, every time, only, always, never.", person),
+    ["only", "never", "impossible", "permanent", "forever", "every time"],
+  );
+  // A different form of the same word counts as used.
+  assert.deepEqual(absolutesNotSaid("This feels permanent.", "it is permanently like this"), []);
+  // Substrings do not count: "safe" is not "unsafe", "onlyfans" is not "only".
+  assert.deepEqual(absolutesNotSaid("You feel safe.", ""), []);
+  assert.deepEqual(absolutesNotSaid("Never.", "never"), []);
+});
+
+test("findAbsoluteViolations checks only the constraint and counter belief", () => {
+  const r = splitReport(
+    "You never stop.\n\nRight now you train.\n\n[SPLIT]\n\nYour subconscious internal constraint is: rest feels unsafe. That makes progress structurally impossible.\n\n[SPLIT]\n\nThe counter belief is: rest is part of it. Log one rest day this week.",
+    "[SPLIT]",
+  );
+  const v = findAbsoluteViolations(numberSentences(r), "i keep stopping");
+  assert.deepEqual(v.map((x) => x.quote), ["Your subconscious internal constraint is: rest feels unsafe.", "That makes progress structurally impossible."]);
+  assert.ok(v.every((x) => x.kind === "absolute"));
+  assert.match(v[0].reason, /"unsafe"/);
+});
+
+test("rewriteIssues rejects the extended absolutes", () => {
+  const issues = rewriteIssues("constraint", "Your subconscious internal constraint is: change is impossible.", 100, "i keep stopping");
+  assert.ok(issues.some((i) => i.includes('"impossible"')));
+});
+
+test("findDuplicateViolations keeps the first and flags the later repeat", () => {
+  const r = splitReport(
+    "You said it plainly. Disagreeing with it and being free of it are two different things.\n\nThe anchor came later.\n\nRight now you train.\n\nRemember, disagreeing with it and being free of it are two different things.\n\n[SPLIT]\n\nYour subconscious internal constraint is: X.\n\n[SPLIT]\n\nThe counter belief is: Y.",
+    "[SPLIT]",
+  );
+  const v = findDuplicateViolations(numberSentences(r));
+  assert.equal(v.length, 1);
+  assert.equal(v[0].kind, "duplicate");
+  assert.ok(v[0].quote.startsWith("Remember"));
+  assert.match(v[0].reason, /disagreeing with it and being free of it are two different things.*paragraph 1/);
+});
+
+test("sharedRun ignores short or filler overlaps", () => {
+  assert.equal(sharedRun("you want to be able to do it", "and you want to be able to do it now"), null);
+  assert.equal(sharedRun("one two three four five", "one two three four five"), null);
+  assert.equal(sharedRun("the gym was where your dad watched you", "the gym was where your dad watched you lift"), "the gym was where your dad watched you");
+});
+
+test("rewriteIssues rejects a paragraph rewrite that repeats another paragraph", () => {
+  const other = "Disagreeing with it and being free of it are two different things.";
+  const issues = rewriteIssues("paragraph5", "Disagreeing with it and being free of it are two different things, so act.", 60, "", "", [other]);
+  assert.ok(issues.some((i) => i.startsWith("repeats")));
+  assert.deepEqual(rewriteIssues("paragraph5", "The shift is to log what you did.", 60, "", "", [other]), []);
 });

@@ -23,6 +23,9 @@ import {
   numberSentences,
   parseDeletions,
   reportLengths,
+  type ReportParts,
+  type Sentence,
+  sentenceKey,
 } from "./review";
 import {
   AUDIT_SCHEMA,
@@ -33,6 +36,7 @@ import {
   buildCheckSystem,
   CHECK_SCHEMA,
   dismissNumberFalsePositives,
+  dropWithdrawn,
   findQuotedSentences,
   formatTranscript,
   matchViolations,
@@ -46,6 +50,8 @@ import {
   buildRepairSystem,
   buildRewriteInput,
   buildRewriteSystem,
+  findAbsoluteViolations,
+  findDuplicateViolations,
   joinReport,
   parseRepairs,
   parseRewrite,
@@ -314,7 +320,10 @@ export interface RewriteRecord {
 }
 
 export interface CheckRound {
+  /** What this round acted on: the check call's flags plus the code checks' (absolute, duplicate). */
   violations: Violation[] | null;
+  /** Flags the checker took back in its own reason (or marked stands_behind false); never acted on. */
+  withdrawn?: Violation[];
   /** "Not said" number flags dropped because the person did say those numbers. */
   dismissed: Violation[];
   deleted: string[];
@@ -366,6 +375,16 @@ export async function generateReport(
   let timedOut = false;
   const rounds: CheckRound[] = [];
   const rewriteCount = new Map<SectionName, number>();
+  // Every sentence ever locked stays locked, wherever later deletions and
+  // rewrites move it. Locks were once worked out afresh from each round's
+  // paragraph positions, which let a protected paragraph be deleted.
+  const lockedKeys = new Set<string>();
+  const number = (p: ReportParts): Sentence[] => {
+    const out = numberSentences(p, lockedKeys);
+    for (const x of out) if (x.locked) lockedKeys.add(sentenceKey(x.text));
+    return out;
+  };
+  number(splitReport(final, REPORT_SPLIT_MARKER));
   const everDeleted = lengthPasses.flatMap((lp) => lp.deleted);
   const rejectedText = audit ? audit.rejected.flatMap((r) => [r.interpretation, r.quote]) : [];
 
@@ -377,22 +396,40 @@ export async function generateReport(
         break;
       }
       const found = await checkReport(transcript, audit, current);
-      const { kept: violations, dismissed } =
-        found === null ? { kept: null, dismissed: [] } : dismissNumberFalsePositives(found, personWords);
-      const round: CheckRound = { violations, dismissed, deleted: [], unfixable: [] };
+      let parts = splitReport(current, REPORT_SPLIT_MARKER);
+      let sentences = number(parts);
+      const { kept: standing, withdrawn } = found === null ? { kept: null, withdrawn: [] } : dropWithdrawn(found);
+      const { kept: modelFlags, dismissed } =
+        standing === null ? { kept: null, dismissed: [] } : dismissNumberFalsePositives(standing, personWords);
+      // Code checks run every round, even when the check call fails.
+      const absolutes = findAbsoluteViolations(sentences, personWords);
+      const duplicates = findDuplicateViolations(sentences);
+      const violations = modelFlags === null && absolutes.length + duplicates.length === 0
+        ? null
+        : [...(modelFlags ?? []), ...absolutes, ...duplicates];
+      const round: CheckRound = { violations, withdrawn, dismissed, deleted: [], unfixable: [] };
       rounds.push(round);
       if (violations === null || violations.length === 0) {
-        console.info("Report check " + n + ": " + (violations === null ? "check failed" : "clean"));
+        console.info("Report check " + n + ": " + (violations === null ? "check failed" : "clean") + ", " + withdrawn.length + " withdrawn");
         break;
       }
-      console.info("Report check " + n + ": " + violations.length + " violation(s), " + dismissed.length + " dismissed");
+      console.info("Report check " + n + ": " + violations.length + " violation(s), " + withdrawn.length + " withdrawn, " + dismissed.length + " dismissed");
       // The last check only records what ships.
       if (n === MAX_CHECKS) break;
 
-      // 1. Delete flagged sentences that aren't protected.
-      let parts = splitReport(current, REPORT_SPLIT_MARKER);
-      let sentences = numberSentences(parts);
-      const { deleteIds, unfixable } = matchViolations(sentences, violations);
+      // 1. Delete flagged sentences that aren't protected. An absolute is
+      //    never fixed by deleting its sentence (that could drop the
+      //    constraint's closing words); its section is rewritten instead.
+      //    Code-found flags name their exact sentence, so they are matched by
+      //    text; matching a duplicate by quote would also hit the first copy.
+      const matched = matchViolations(sentences, modelFlags ?? []);
+      const deleteIds = [...matched.deleteIds];
+      const unfixable = [...matched.unfixable, ...absolutes];
+      for (const v of duplicates) {
+        const s = sentences.find((x) => x.text === v.quote);
+        if (s && !s.locked) deleteIds.push(s.id);
+        else unfixable.push(v);
+      }
       const afterDelete = applyDeletions(sentences, deleteIds, parts, { onlyOverLimit: false });
       round.deleted = sentences.filter((x) => deleteIds.includes(x.id) && !afterDelete.includes(x.text)).map((x) => x.text);
       round.unfixable = unfixable;
@@ -412,7 +449,7 @@ export async function generateReport(
           round.repairs = null;
         } else {
           const cleaned = repairs.map((r) => ({ original: r.original, replacement: stripDashes(r.replacement) }));
-          const outcome = applyRepairs(parts, numberSentences(parts), cleaned, [...everDeleted, ...rejectedText]);
+          const outcome = applyRepairs(parts, number(parts), cleaned, [...everDeleted, ...rejectedText]);
           round.repairs = { applied: outcome.applied, skipped: outcome.skipped };
           if (outcome.applied.length > 0) current = joinReport(outcome.report);
           console.info("Report reference repair: " + outcome.applied.length + " applied, " + outcome.skipped.length + " skipped");
@@ -422,10 +459,14 @@ export async function generateReport(
       // 3. Rewrite each section that holds a flagged protected sentence, at
       //    most twice per section.
       parts = splitReport(current, REPORT_SPLIT_MARKER);
-      sentences = numberSentences(parts);
+      sentences = number(parts);
       const flaggedBySection = new Map<SectionName, Violation[]>();
       for (const v of unfixable) {
-        const sections = new Set(findQuotedSentences(sentences, v.quote).filter((x) => x.locked).map(sectionOf));
+        // A code-found absolute is fixed by rewrite whether or not its sentence is locked.
+        const hits = v.kind === "absolute" || v.kind === "duplicate"
+          ? sentences.filter((x) => x.text === v.quote)
+          : findQuotedSentences(sentences, v.quote);
+        const sections = new Set(hits.filter((x) => x.locked || v.kind === "absolute").map(sectionOf));
         for (const sec of sections) {
           if ((rewriteCount.get(sec) ?? 0) >= 2) continue;
           flaggedBySection.set(sec, [...(flaggedBySection.get(sec) ?? []), v]);
@@ -451,9 +492,16 @@ export async function generateReport(
           rewriteCount.set(t.section, (rewriteCount.get(t.section) ?? 0) + 1);
           const proposal = rewritten?.find((r) => r.section === t.section)?.text ?? null;
           const text = proposal === null ? null : stripDashes(proposal);
-          const issues = text === null ? ["no rewrite returned"] : rewriteIssues(t.section, text, t.limit, personWords, t.current);
+          const others = t.section.startsWith("paragraph")
+            ? updated.narrative.split(/\n\s*\n/).map((x) => x.trim()).filter((x) => x && x !== t.current)
+            : [];
+          const issues = text === null ? ["no rewrite returned"] : rewriteIssues(t.section, text, t.limit, personWords, t.current, others);
           const accepted = issues.length === 0;
-          if (accepted && text !== null) updated = replaceSection(updated, t.section, text);
+          if (accepted && text !== null) {
+            updated = replaceSection(updated, t.section, text);
+            // A rewritten protected section stays protected.
+            number(updated);
+          }
           return { section: t.section, label: sectionLabel(t.section, paragraphCount), flagged: t.flagged, before: t.current, after: text, accepted, issues };
         });
         if (round.rewrite.some((r) => r.accepted)) current = joinReport(updated);

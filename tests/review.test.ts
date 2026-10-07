@@ -40,10 +40,11 @@ test("isWellFormed requires three parts with the exact openings", () => {
   assert.ok(!isWellFormed(good + "\n[SPLIT]\nextra"));
 });
 
-test("isOverLimits uses 260 for the narrative and 75 per section", () => {
-  assert.ok(!isOverLimits({ narrative: words(260), constraint: words(75), counterBelief: words(75) }));
+test("isOverLimits uses 260 for the narrative, 100 for the constraint and 75 for the counter belief", () => {
+  assert.ok(!isOverLimits({ narrative: words(260), constraint: words(100), counterBelief: words(75) }));
   assert.ok(isOverLimits({ narrative: words(261), constraint: words(10), counterBelief: words(10) }));
-  assert.ok(isOverLimits({ narrative: words(10), constraint: words(76), counterBelief: words(10) }));
+  assert.ok(isOverLimits({ narrative: words(10), constraint: words(101), counterBelief: words(10) }));
+  assert.ok(isOverLimits({ narrative: words(10), constraint: words(10), counterBelief: words(76) }));
 });
 
 test("splitSentences keeps every character, including closing quotes", () => {
@@ -136,7 +137,8 @@ test("cut input shows counts, OVER flags, and locks", () => {
   const p = parts(longReport);
   const input = buildCutInput(numberSentences(p), p);
   assert.match(input, /NARRATIVE: \d+ words, limit 260, OVER, delete at least \d+ words/);
-  assert.match(input, /CONSTRAINT SECTION: \d+ words, limit 75, within limit, do not delete from this part/);
+  assert.match(input, /CONSTRAINT SECTION: \d+ words, limit 100, within limit, do not delete from this part/);
+  assert.match(input, /COUNTER BELIEF SECTION: \d+ words, limit 75, /);
   assert.match(input, /\(\d+ words, LOCKED\) The architecture was built over years\./);
 });
 
@@ -167,6 +169,33 @@ test("nothing extra is locked when the narrative does not have five paragraphs",
   const locked = numberSentences(parts(raw)).filter((x) => x.locked && x.part === "narrative");
   assert.ok(locked.every((x) => x.paragraph === 3));
   assert.equal(locked.length, 3);
+});
+
+test("with six paragraphs, the one before the shift is locked as where they stand today", () => {
+  const six = [para(1, 2), para(2, 2), para(3, 2), para(4, 2), "Right now you are building something real.", para(6, 2)].join("\n\n");
+  const raw = six + "\n\n[SPLIT]\n\nYour subconscious internal constraint is: X.\n\n[SPLIT]\n\nThe counter belief is: Y.";
+  const s = numberSentences(parts(raw));
+  assert.ok(s.find((x) => x.text === "Right now you are building something real.")!.locked);
+  assert.ok(!s.find((x) => x.paragraph === 3)!.locked);
+});
+
+test("a sentence locked earlier stays locked after an earlier paragraph is deleted", async () => {
+  const { sentenceKey } = await import("../src/lib/diagnostic/review.ts");
+  const five = [para(1, 2), para(2, 2), para(3, 2), "Right now you are building something real.", para(5, 2)].join("\n\n");
+  const raw = five + "\n\n[SPLIT]\n\nYour subconscious internal constraint is: X.\n\n[SPLIT]\n\nThe counter belief is: Y.";
+  const p = parts(raw);
+  const first = numberSentences(p);
+  const keys = new Set(first.filter((x) => x.locked).map((x) => sentenceKey(x.text)));
+  // A check deletes all of paragraph 2, leaving four paragraphs.
+  const after = parts(applyDeletions(first, first.filter((x) => x.paragraph === 1 && x.part === "narrative").map((x) => x.id), p, { onlyOverLimit: false }));
+  assert.equal(after.narrative.split("\n\n").length, 4);
+  // Worked out afresh, the today paragraph is no longer locked (this is how it was deleted)...
+  assert.ok(!numberSentences(after).find((x) => x.text.startsWith("Right now"))!.locked);
+  // ...but carried forward, it is, and a request to delete it does nothing.
+  const s = numberSentences(after, keys);
+  assert.ok(s.find((x) => x.text.startsWith("Right now"))!.locked);
+  const out = parts(applyDeletions(s, s.map((x) => x.id), after, { onlyOverLimit: false }));
+  assert.ok(out.narrative.includes("Right now you are building something real."));
 });
 
 test("the final narrative paragraph is locked whole, so the shift is never left half-finished", () => {

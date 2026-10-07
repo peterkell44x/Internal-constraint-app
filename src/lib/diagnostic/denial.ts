@@ -23,12 +23,16 @@ export interface Audit {
   uncertain?: { interpretation: string; quote: string }[];
 }
 
-export type ViolationKind = "rejected" | "unconfirmed_link" | "not_said";
+// The first three come from the check call; "absolute" and "duplicate" are
+// found by code (repair.ts).
+export type ViolationKind = "rejected" | "unconfirmed_link" | "not_said" | "absolute" | "duplicate";
 
 export interface Violation {
   quote: string;
   kind: ViolationKind;
   reason: string;
+  /** From the check call: false when the checker took the flag back after writing its reason. */
+  stands_behind?: boolean;
 }
 
 /** The conversation as plain text, without the hidden "Begin the diagnostic." opener. */
@@ -81,11 +85,14 @@ export const CHECK_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["quote", "kind", "reason"],
+        // stands_behind comes after the reason, so the checker decides it
+        // once it has written its reasoning.
+        required: ["quote", "kind", "reason", "stands_behind"],
         properties: {
           quote: str,
           kind: { type: "string", enum: ["rejected", "unconfirmed_link", "not_said"] },
           reason: str,
+          stands_behind: { type: "boolean" },
         },
       },
     },
@@ -112,7 +119,7 @@ export function buildCheckSystem(): string {
   + "not_said: states as fact something about the person or anyone in their life that the person never said, such as an event, number, feeling, motive, or a consequence that rests on a fact about their situation they never stated.\n\n"
   + "Before flagging a number, amount, age, or duration, read every message from the person. Numbers can be written as digits or words and ranges can be written as 4-5 or four to five; these mean the same thing.\n\n"
   + "Do not flag: things the person said, links on the confirmed list and how they play out, what a single thing the person said means in their own framing, the suggested action in the counter belief section, or wording and style. When in doubt whether the person said something, check the conversation.\n\n"
-  + "For each violation, quote the exact sentence or clause from the profile and give a short reason. If there are none, return an empty list.";
+  + "For each violation, quote the exact sentence or clause from the profile and give a short reason. Then set stands_behind: true only if, after checking the conversation, you still hold that it is a violation. If while writing the reason you find the person did say it, or you change your mind, leave the item out, or set stands_behind to false. Items with stands_behind false are ignored. If there are none, return an empty list.";
 }
 
 function formatAudit(a: Audit): string {
@@ -161,6 +168,25 @@ export function containsDenial(quote: string): boolean {
     .replace(/[‘’]/g, "'")
     .replace(/\bi\s*(do\s*n'?o?t|dont|don't)\s+know\b|\bidk\b|\bnot\s+sure\b|\bno\s+idea\b|\bunsure\b|\bmaybe\b|\bnot\s+certain\b/g, " ");
   return /\b(no|nope|not|don'?t|dont|do not|didn'?t|didnt|isn'?t|isnt|wasn'?t|wasnt|never|wrong|disagree)\b/.test(rest);
+}
+
+// Reasons in which the checker takes its own flag back, as it did in testing
+// ("Withdrawing this one", "Withdrawing, the person did say this").
+const WITHDRAWN_REASON = /\bwithdr[ae]w(n|ing|s)?\b|\bretract(ed|ing|s)?\b|\bnot (actually |really )?a violation\b|\bscratch that\b/i;
+
+/**
+ * Separates flags the checker stands behind from ones it withdrew: marked
+ * stands_behind false, or a reason that takes the flag back. Withdrawn flags
+ * are never acted on.
+ */
+export function dropWithdrawn(violations: Violation[]): { kept: Violation[]; withdrawn: Violation[] } {
+  const kept: Violation[] = [];
+  const withdrawn: Violation[] = [];
+  for (const v of violations) {
+    if (v.stands_behind === false || WITHDRAWN_REASON.test(v.reason ?? "")) withdrawn.push(v);
+    else kept.push(v);
+  }
+  return { kept, withdrawn };
 }
 
 export function parseViolations(text: string): Violation[] | null {

@@ -5,6 +5,7 @@ import {
   AUDIT_SCHEMA,
   buildCheckInput,
   CHECK_SCHEMA,
+  dropWithdrawn,
   formatTranscript,
   matchViolations,
   parseAudit,
@@ -158,4 +159,17 @@ test("dismissNumberFalsePositives drops number flags the person's words support,
   );
   assert.deepEqual(dismissed.map((v) => v.quote), ["You have been training for four to five years."]);
   assert.equal(kept.length, 3);
+});
+
+test("dropWithdrawn ignores flags the checker takes back", () => {
+  const v = [
+    { quote: "a", kind: "not_said" as const, reason: "Withdrawing this one", stands_behind: true },
+    { quote: "b", kind: "not_said" as const, reason: "Withdrawing, the person did say this" },
+    { quote: "c", kind: "rejected" as const, reason: "he rejected this", stands_behind: false },
+    { quote: "d", kind: "unconfirmed_link" as const, reason: "never confirmed", stands_behind: true },
+    { quote: "e", kind: "not_said" as const, reason: "never said" },
+  ];
+  const { kept, withdrawn } = dropWithdrawn(v);
+  assert.deepEqual(kept.map((x) => x.quote), ["d", "e"]);
+  assert.deepEqual(withdrawn.map((x) => x.quote), ["a", "b", "c"]);
 });
