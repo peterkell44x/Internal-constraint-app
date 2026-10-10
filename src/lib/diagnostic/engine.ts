@@ -75,6 +75,7 @@ import {
   replaceSection,
   REWRITE_SCHEMA,
   restoreIntroductions,
+  rewriteRetryNote,
   rewriteIssues,
   type SectionName,
   sectionLabel,
@@ -364,6 +365,8 @@ export interface RewriteRecord {
   after: string | null;
   accepted: boolean;
   issues: string[];
+  /** Set when a rejected paragraph rewrite was asked for again: why the first attempt was rejected. */
+  firstIssues?: string[];
 }
 
 export interface CheckRound {
@@ -474,15 +477,12 @@ export async function generateReport(
     paragraphCount: number,
   ): Promise<{ report: string; records: RewriteRecord[] }> => {
     const d = DOMAINS[domain];
-    const rewritten = await callFix(
-      buildRewriteSystem(d.reportTitle, d.goalPhrase),
-      buildRewriteInput(transcript, audit!, current, targets, statedProblem),
-      REWRITE_SCHEMA,
-      parseRewrite,
-    );
+    const input = buildRewriteInput(transcript, audit!, current, targets, statedProblem);
+    const ask = (extra = "") => callFix(buildRewriteSystem(d.reportTitle, d.goalPhrase), input + extra, REWRITE_SCHEMA, parseRewrite);
     let updated = splitReport(current, REPORT_SPLIT_MARKER);
     const records: RewriteRecord[] = [];
-    for (const t of targets) {
+    type Target = (typeof targets)[number];
+    const assess = async (t: Target, rewritten: { section: SectionName; text: string }[] | null) => {
       const proposal = rewritten?.find((r) => r.section === t.section)?.text ?? null;
       const text = proposal === null ? null : stripDashes(proposal);
       const others = t.section.startsWith("paragraph")
@@ -495,13 +495,32 @@ export async function generateReport(
         const tie = await judgeTie(text);
         if (tie && !tie.connects) issues.push("last sentence does not tie the belief to their stated problem: " + tie.reason);
       }
-      const accepted = issues.length === 0;
-      if (accepted && text !== null) {
+      if (text !== null && issues.length === 0) {
         updated = replaceSection(updated, t.section, text);
         // A rewritten protected section stays protected.
         number(updated);
       }
-      records.push({ section: t.section, label: sectionLabel(t.section, paragraphCount), flagged: t.flagged, before: t.current, after: text, accepted, issues });
+      return { text, issues };
+    };
+    const record = (t: Target, text: string | null, issues: string[], firstIssues?: string[]): RewriteRecord => ({
+      section: t.section, label: sectionLabel(t.section, paragraphCount), flagged: t.flagged, before: t.current, after: text,
+      accepted: issues.length === 0, issues, ...(firstIssues ? { firstIssues } : {}),
+    });
+    const first = await ask();
+    const retry: { t: Target; issues: string[] }[] = [];
+    for (const t of targets) {
+      const { text, issues } = await assess(t, first);
+      if (issues.length > 0 && t.section.startsWith("paragraph")) retry.push({ t, issues });
+      else records.push(record(t, text, issues));
+    }
+    // A rejected paragraph rewrite is asked for once more, told its exact
+    // word limit and why the first attempt was rejected.
+    if (retry.length > 0) {
+      const second = await ask(rewriteRetryNote(retry.map((r) => ({ section: r.t.section, limit: r.t.limit, issues: r.issues }))));
+      for (const { t, issues: firstIssues } of retry) {
+        const { text, issues } = await assess(t, second);
+        records.push(record(t, text, issues, firstIssues));
+      }
     }
     return { report: records.some((r) => r.accepted) ? joinReport(updated) : current, records };
   };

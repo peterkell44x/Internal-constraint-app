@@ -14,6 +14,7 @@ import {
   lastSentence,
   restoreIntroductions,
   rewriteIssues,
+  rewriteRetryNote,
   sharedRun,
   splitRepairs,
   termsOf,
@@ -219,4 +220,31 @@ test("applyRepairs will not cut a protected sentence down", () => {
   const out = applyRepairs(parts, sentences, [{ original: target.text, replacement: "This week, rest." }]);
   assert.equal(out.applied.length, 0);
   assert.equal(out.skipped[0].reason, "cuts too much from a protected sentence");
+});
+
+test("a paragraph rewrite may go up to 20 words over its limit while the narrative stays within 280", () => {
+  // Distinct words per call, so paragraphs never share a run of words.
+  let tag = 0;
+  const words = (n: number) => {
+    const t = String.fromCharCode(97 + tag++);
+    return Array.from({ length: n }, (_, i) => t + "w" + String.fromCharCode(97 + Math.floor(i / 26)) + String.fromCharCode(97 + (i % 26))).join(" ") + ".";
+  };
+  // The real case: 35 words against a limit of 34, the other paragraphs 226 words.
+  const others = [words(100), words(126)];
+  assert.deepEqual(rewriteIssues("paragraph3", words(35), 34, "", "", others), []);
+  // 20 over is still fine; 21 over is not.
+  assert.deepEqual(rewriteIssues("paragraph3", words(54), 34, "", "", others), []);
+  assert.ok(rewriteIssues("paragraph3", words(55), 34, "", "", others).some((i) => i.startsWith("over the word limit (55 of 34")));
+  // Within the paragraph's slack, but the whole narrative would pass 280.
+  assert.ok(rewriteIssues("paragraph3", words(30), 15, "", "", [words(140), words(120)]).some((i) => i.startsWith("narrative over 280")));
+  // Every other check still applies to a rewrite within the slack.
+  assert.ok(rewriteIssues("paragraph3", words(34) + " It never ends.", 34, "", "", others).some((i) => i.includes('"never"')));
+  assert.ok(rewriteIssues("paragraph3", others[0], 34, "", "", others).some((i) => i.startsWith("repeats")));
+  // The final sections get no slack.
+  assert.ok(rewriteIssues("constraint", "Your subconscious internal constraint is: " + words(96), 100, "").some((i) => i.startsWith("over the word limit")));
+});
+
+test("the retry note gives each rejected section its exact word limit and reasons", () => {
+  const note = rewriteRetryNote([{ section: "paragraph3", limit: 34, issues: ["over the word limit (60 of 34, plus 20 allowed)"] }]);
+  assert.match(note, /SECTION paragraph3: rejected because over the word limit \(60 of 34, plus 20 allowed\)\. Its exact word limit is 34 words\./);
 });

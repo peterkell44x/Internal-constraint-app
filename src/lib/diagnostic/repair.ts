@@ -31,6 +31,10 @@ import type { ReportParts, Sentence } from "./review";
 export const NARRATIVE_MAX = 260;
 export const SECTION_MAX = 75;
 export const CONSTRAINT_MAX = 100;
+// A paragraph rewrite may run this many words over its limit, as long as the
+// whole narrative stays within NARRATIVE_MAX plus the same amount. Rewrites a
+// few words over (35 of 34) were rejected and the flagged claim shipped.
+export const PARAGRAPH_SLACK = 20;
 const CONSTRAINT_PREFIX = "Your subconscious internal constraint is:";
 const COUNTER_PREFIX = "The counter belief is:";
 
@@ -367,7 +371,14 @@ export function rewriteIssues(
   if (section === "constraint" && !t.startsWith(CONSTRAINT_PREFIX)) issues.push("missing the required opening words");
   if (section === "counterBelief" && !t.startsWith(COUNTER_PREFIX)) issues.push("missing the required opening words");
   const n = countWords(t);
-  if (n > limit) issues.push("over the word limit (" + n + " of " + limit + ")");
+  if (section.startsWith("paragraph")) {
+    // otherParagraphs holds the rest of the narrative.
+    const narrative = n + otherParagraphs.reduce((sum, p) => sum + countWords(p), 0);
+    if (n > limit + PARAGRAPH_SLACK) issues.push("over the word limit (" + n + " of " + limit + ", plus " + PARAGRAPH_SLACK + " allowed)");
+    else if (narrative > NARRATIVE_MAX + PARAGRAPH_SLACK) issues.push("narrative over " + (NARRATIVE_MAX + PARAGRAPH_SLACK) + " words (" + narrative + ")");
+  } else if (n > limit) {
+    issues.push("over the word limit (" + n + " of " + limit + ")");
+  }
   for (const w of absolutesNotSaid(t, personWords)) issues.push('uses "' + w + '", which the person never said');
   if (section === "counterBelief" && t && !counterIsFirstPerson(t)) issues.push("the belief is not in first person");
   if (section.startsWith("paragraph")) {
@@ -502,6 +513,12 @@ export function buildRepairInput(
     + "\n\nPARAGRAPHS THAT LOST THEIR LAST SENTENCE\n" + (lostEnding.length ? lostEnding.map((p) => "- " + p).join("\n") : "(none)")
     + "\n\nTERMS USED WITHOUT AN INTRODUCTION\n" + (orphans.length ? orphans.map((o) => "- " + o.term + ' in "' + o.usedIn + '"').join("\n") : "(none)")
     + "\n\nCURRENT PROFILE\n\n" + report;
+}
+
+/** Added to the rewrite input when a paragraph rewrite is asked for again. */
+export function rewriteRetryNote(rejected: { section: SectionName; limit: number; issues: string[] }[]): string {
+  return "\n\nRETRY\nYour previous text for these sections was rejected. Rewrite them again, and count your words before returning.\n"
+    + rejected.map((r) => "SECTION " + r.section + ": rejected because " + r.issues.join("; ") + ". Its exact word limit is " + r.limit + " words.").join("\n");
 }
 
 /** Repairs whose original spans several sentences; they are split or retried. */

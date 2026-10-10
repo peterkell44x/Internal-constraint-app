@@ -113,6 +113,7 @@ function RewriteView({ rewrite }: { rewrite: RewriteRecord[] | null | undefined 
             <strong>Rewrite of {r.label ?? r.section}:</strong>{" "}
             {r.accepted ? "accepted" : "rejected, original kept"}
             {r.issues.length > 0 && <> ({r.issues.join("; ")})</>}
+            {r.firstIssues && <>, after one retry (first attempt rejected: {r.firstIssues.join("; ")})</>}
           </p>
           <p className="small">Flagged:</p>
           <ViolationList items={r.flagged} />
