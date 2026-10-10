@@ -23,16 +23,22 @@ export interface Audit {
   uncertain?: { interpretation: string; quote: string }[];
 }
 
-// The first four come from the check call; "absolute", "duplicate" and
-// "stated_problem" are found by code (repair.ts).
+// The first five come from the check call; "absolute", "duplicate" and
+// "third_person" are found by code (repair.ts), and "stated_problem" by a
+// separate judgment call.
 export type ViolationKind =
   | "rejected"
   | "unconfirmed_link"
   | "not_said"
   | "uncertain"
+  | "overstated"
   | "absolute"
   | "duplicate"
+  | "third_person"
   | "stated_problem";
+
+/** Kinds fixed by hedging the one sentence rather than deleting it. */
+export const HEDGE_KINDS: ViolationKind[] = ["uncertain", "overstated"];
 
 export interface Violation {
   quote: string;
@@ -97,7 +103,7 @@ export const CHECK_SCHEMA = {
         required: ["quote", "kind", "reason", "stands_behind"],
         properties: {
           quote: str,
-          kind: { type: "string", enum: ["rejected", "unconfirmed_link", "not_said", "uncertain"] },
+          kind: { type: "string", enum: ["rejected", "unconfirmed_link", "not_said", "uncertain", "overstated"] },
           reason: str,
           stands_behind: { type: "boolean" },
         },
@@ -124,7 +130,8 @@ export function buildCheckSystem(): string {
   + "rejected: states, implies, or rewords anything on the rejected list. Only items on that list count as rejected; a question the person answered with idk or uncertainty is not a rejection.\n"
   + "unconfirmed_link: presents a link, cause, pattern, or same move between separate things the person said, or turns one thing they said or did into a general pattern of how they operate, when that link is not on the confirmed list and the person did not state it themselves.\n"
   + "not_said: states as fact something about the person or anyone in their life that the person never said, such as an event, number, feeling, motive, or a consequence that rests on a fact about their situation they never stated.\n"
-  + "uncertain: states as fact, in any wording, anything on the uncertain list. The person was unsure about these, for example they answered yeah i think, maybe, or idk, so the profile must not present them as true, as something about them, or as the reason for something.\n\n"
+  + "uncertain: states as fact, in any wording, anything on the uncertain list. The person was unsure about these, for example they answered yeah i think, maybe, or idk, so the profile must not present them as true, as something about them, or as the reason for something.\n"
+  + "overstated: states something the person did say, but more firmly, more broadly, more often, or more exactly than they said it, for example dropping their maybe, turning since 18, maybe even 12 into a firm age, or turning one example they gave into every time.\n\n"
   + "Before flagging a number, amount, age, or duration, read every message from the person. Numbers can be written as digits or words and ranges can be written as 4-5 or four to five; these mean the same thing.\n\n"
   + "Do not flag: things the person said, links on the confirmed list and how they play out, what a single thing the person said means in their own framing, the suggested action in the counter belief section, or wording and style. When in doubt whether the person said something, check the conversation.\n\n"
   + "For each violation, quote the exact sentence or clause from the profile and give a short reason. Then set stands_behind: true only if, after checking the conversation, you still hold that it is a violation. If while writing the reason you find the person did say it, or you change your mind, leave the item out, or set stands_behind to false. Items with stands_behind false are ignored. If there are none, return an empty list.";

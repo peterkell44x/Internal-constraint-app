@@ -38,7 +38,7 @@ const PART_LABEL: Record<PartName, string> = {
   constraint: "Constraint section",
   counterBelief: "Counter belief section",
 };
-const PART_LIMIT: Record<PartName, number> = {
+export const PART_LIMITS: Record<PartName, number> = {
   narrative: NARRATIVE_MAX_WORDS,
   constraint: CONSTRAINT_MAX_WORDS,
   counterBelief: SECTION_MAX_WORDS,
@@ -57,7 +57,7 @@ export function reportLengths(r: ReportParts) {
 }
 
 function isPartOver(r: ReportParts, part: PartName): boolean {
-  return countWords(r[part]) > PART_LIMIT[part];
+  return countWords(r[part]) > PART_LIMITS[part];
 }
 
 export function isOverLimits(r: ReportParts): boolean {
@@ -161,7 +161,7 @@ export function numberSentences(r: ReportParts, alsoLocked?: Set<string>): Sente
  */
 export function isOvercut(before: ReportParts, after: ReportParts): boolean {
   return PART_ORDER.some(
-    (p) => after[p] !== before[p] && countWords(after[p]) < PART_LIMIT[p] / 2,
+    (p) => after[p] !== before[p] && countWords(after[p]) < PART_LIMITS[p] / 2,
   );
 }
 
@@ -214,7 +214,7 @@ export function buildCutInput(sentences: Sentence[], r: ReportParts): string {
   const lines: string[] = [];
   for (const part of PART_ORDER) {
     const n = countWords(r[part]);
-    const limit = PART_LIMIT[part];
+    const limit = PART_LIMITS[part];
     lines.push(
       "",
       PART_LABEL[part].toUpperCase() + ": " + n + " words, limit " + limit +

@@ -8,12 +8,15 @@ import {
   absolutesNotSaid,
   findAbsoluteViolations,
   findDuplicateViolations,
-  findProblemViolations,
+  counterIsFirstPerson,
+  findOrphans,
+  findPersonViolations,
   lastSentence,
+  restoreIntroductions,
   rewriteIssues,
   sharedRun,
   splitRepairs,
-  tiesToProblem,
+  termsOf,
   sectionLimit,
   sectionOf,
   sectionText,
@@ -43,6 +46,9 @@ test("sectionOf maps sentences to the final sections or their narrative paragrap
 test("sectionLimit gives a paragraph whatever the narrative has left", () => {
   assert.equal(sectionLimit(parts, "constraint"), 100);
   assert.equal(sectionLimit(parts, "counterBelief"), 75);
+  // A locked counter belief that already runs long may be rewritten at its own length.
+  const long = { ...parts, counterBelief: "The counter belief is: " + "w ".repeat(85).trim() };
+  assert.equal(sectionLimit(long, "counterBelief"), 89);
   const narrativeWords = parts.narrative.split(/\s+/).filter(Boolean).length;
   const shiftWords = sectionText(parts, "paragraph5").split(/\s+/).length;
   assert.equal(sectionLimit(parts, "paragraph5"), 260 - (narrativeWords - shiftWords));
@@ -157,35 +163,39 @@ test("rewriteIssues rejects a paragraph rewrite that repeats another paragraph",
   assert.deepEqual(rewriteIssues("paragraph5", "The shift is to log what you did.", 60, "", "", [other]), []);
 });
 
-const problem = "not having girls to banter with and have sex with";
-
-test("tiesToProblem needs two meaningful words in common, counting girl and girls as one", () => {
-  assert.ok(tiesToProblem("This is why you keep stopping yourself from having sex with girls.", problem));
-  assert.ok(tiesToProblem("That belief keeps you from the banter you want with a girl.", problem));
-  // The garbled rewrite that shipped: only filler in common.
-  assert.ok(!tiesToProblem("That belief is what keeps you not having it but wanting it, not big and strong enough.", problem));
-  assert.ok(!tiesToProblem("This keeps you from getting girls.", problem));
-});
-
-test("findProblemViolations checks the constraint's last sentence only", () => {
-  const ok = splitReport("N.\n\n[SPLIT]\n\nYour subconscious internal constraint is: you are not big enough. This is why you keep missing the banter and sex with girls you want.\n\n[SPLIT]\n\nThe counter belief is: Y.", "[SPLIT]");
-  assert.deepEqual(findProblemViolations(ok, problem), []);
-  const bad = splitReport("N.\n\n[SPLIT]\n\nYour subconscious internal constraint is: girls want banter and sex with big guys. So you stop messaging.\n\n[SPLIT]\n\nThe counter belief is: Y.", "[SPLIT]");
-  const v = findProblemViolations(bad, problem);
-  assert.equal(v.length, 1);
-  assert.equal(v[0].quote, "So you stop messaging.");
-  assert.equal(v[0].kind, "stated_problem");
-  assert.deepEqual(findProblemViolations(bad, null), []);
+test("lastSentence returns the final sentence", () => {
   assert.equal(lastSentence("One. Two? Three."), "Three.");
 });
 
-test("rewriteIssues rejects a constraint rewrite whose last sentence drops the stated problem", () => {
-  const without = "Your subconscious internal constraint is: you are not big enough. That keeps you not having it.";
-  const withIt = "Your subconscious internal constraint is: you are not big enough. That is why you keep missing out on banter and sex with girls.";
-  assert.ok(rewriteIssues("constraint", without, 100, "", "", [], problem).includes("last sentence does not name their stated problem"));
-  assert.deepEqual(rewriteIssues("constraint", withIt, 100, "", "", [], problem), []);
-  // Not checked for other sections, or when there is no stated problem.
-  assert.deepEqual(rewriteIssues("constraint", without, 100, ""), []);
+test("the counter belief must state the belief in first person", () => {
+  assert.ok(counterIsFirstPerson("The counter belief is: I have not reached my ceiling. Log every lift this week."));
+  assert.ok(!counterIsFirstPerson("The counter belief is: he has not reached his ceiling. Log every lift this week."));
+  const r = splitReport("N.\n\n[SPLIT]\n\nYour subconscious internal constraint is: X.\n\n[SPLIT]\n\nThe counter belief is: he has not reached his ceiling. Log every lift.", "[SPLIT]");
+  const v = findPersonViolations(r);
+  assert.equal(v.length, 1);
+  assert.equal(v[0].kind, "third_person");
+  assert.ok(rewriteIssues("counterBelief", "The counter belief is: he can grow. Log it.", 75, "").includes("the belief is not in first person"));
+});
+
+test("termsOf finds digit numbers and names, not the first word", () => {
+  assert.deepEqual(termsOf("Every time you build to 140, Hamza says it resets you to 125."), ["140", "125", "Hamza"]);
+  assert.deepEqual(termsOf("You said it."), []);
+  assert.deepEqual(termsOf("The counter belief is: I can save $6,000 by June."), ["6000", "June"]);
+});
+
+test("findOrphans finds numbers whose introducing sentence was cut, and restoreIntroductions puts it back", () => {
+  const draft = "You started at 125 pounds. You have never broken past 143 pounds. You want abs.\n\nEvery rebuild resets you back to 125. The ceiling at 143 holds.";
+  const deleted = ["You started at 125 pounds.", "You have never broken past 143 pounds."];
+  const current = { narrative: "You want abs.\n\nEvery rebuild resets you back to 125. The ceiling at 143 holds.", constraint: "C.", counterBelief: "B." };
+  const sentences = ["You want abs.", "Every rebuild resets you back to 125.", "The ceiling at 143 holds.", "C.", "B."];
+  const orphans = findOrphans(sentences, deleted, draft);
+  assert.deepEqual(orphans.map((o) => [o.term, o.introducedBy]), [["125", deleted[0]], ["143", deleted[1]]]);
+  const restored = restoreIntroductions(current, orphans);
+  assert.equal(restored.narrative, "You want abs.\n\nYou started at 125 pounds. Every rebuild resets you back to 125. You have never broken past 143 pounds. The ceiling at 143 holds.");
+  // A term still introduced by a kept sentence is not an orphan.
+  assert.deepEqual(findOrphans(["You started at 125 pounds.", "Every rebuild resets you back to 125."], deleted, draft), []);
+  // 1250 is not 125.
+  assert.deepEqual(findOrphans(["You saved 1250."], ["You started at 125 pounds."], "You started at 125 pounds. You saved 1250."), []);
 });
 
 test("splitRepairs turns a block into one repair per changed sentence, and returns blocks it cannot split", () => {

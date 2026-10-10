@@ -21,6 +21,7 @@ import {
   isWellFormed,
   numberSentences,
   parseDeletions,
+  PART_LIMITS,
   reportLengths,
   type ReportParts,
   type Sentence,
@@ -37,6 +38,7 @@ import {
   CHECK_SCHEMA,
   dismissNumberFalsePositives,
   dropWithdrawn,
+  HEDGE_KINDS,
   findQuotedSentences,
   formatTranscript,
   matchViolations,
@@ -49,20 +51,30 @@ import {
   buildRepairInput,
   buildRepairSystem,
   buildRewriteInput,
+  buildHedgeInput,
+  buildHedgeSystem,
   buildProblemSystem,
+  buildProblemTieInput,
+  buildProblemTieSystem,
   buildRewriteSystem,
   findAbsoluteViolations,
   findDuplicateViolations,
-  findProblemViolations,
+  findOrphans,
+  findPersonViolations,
   joinReport,
+  lastSentence,
+  type Orphan,
   parseProblem,
+  parseProblemTie,
   parseRepairs,
   parseRewrite,
   PROBLEM_SCHEMA,
+  PROBLEM_TIE_SCHEMA,
   REPAIR_SCHEMA,
   RETRY_ONE_SENTENCE,
   replaceSection,
   REWRITE_SCHEMA,
+  restoreIntroductions,
   rewriteIssues,
   type SectionName,
   sectionLabel,
@@ -238,6 +250,11 @@ async function draftAndCut(
       break;
     }
     const sentences = numberSentences(parts);
+    // A part that is over but entirely locked (such as a long counter belief)
+    // can't be shortened here, so don't ask.
+    const lengths = reportLengths(parts);
+    const cuttable = sentences.some((x) => !x.locked && lengths[x.part] > PART_LIMITS[x.part]);
+    if (!cuttable) break;
     let reply: string;
     try {
       reply = await callClaude(
@@ -325,10 +342,11 @@ async function checkReport(transcript: string, audit: Audit, report: string): Pr
 // The audit and check replies are short lists.
 const CHECK_MAX_TOKENS = 4000;
 
-// Checks of the report. After each one except the last, the flagged sentences
-// are fixed: unprotected ones deleted, references they leave dangling
-// repaired, and protected ones rewritten with their section. The last check
-// only records what still ships.
+// Checks of the report. After each one, sentences stated more firmly than the
+// person said are hedged, other flagged unprotected sentences deleted, and
+// references they leave dangling repaired. After each but the last, flagged
+// protected sections are also rewritten. What the last check's fixes produce
+// is not checked again.
 const MAX_CHECKS = 3;
 
 // The reference-repair and section-rewrite replies are short.
@@ -358,9 +376,18 @@ export interface CheckRound {
   deleted: string[];
   /** Flags in protected sentences (or quotes not found), sent to the rewrite. */
   unfixable: Violation[];
-  repairs?: { applied: { original: string; replacement: string }[]; skipped: { original: string; replacement: string; reason: string }[] } | null;
+  repairs?: RepairRecord | null;
   rewrite?: RewriteRecord[] | null;
+  /** Sentences stated more firmly than the person did, rewritten to match. */
+  hedges?: RepairRecord | null;
+  /** Whether the constraint's last sentence ties the belief to the stated problem; null if not judged. */
+  tie?: { connects: boolean; reason: string } | null;
 }
+
+export type RepairRecord = {
+  applied: { original: string; replacement: string }[];
+  skipped: { original: string; replacement: string; reason: string }[];
+};
 
 /** What the denial check saw and did, stored with the report for tuning. */
 export interface ReportChecks {
@@ -373,6 +400,8 @@ export interface ReportChecks {
   statedProblem?: string | null;
   /** The rewrite after the checks when the constraint still did not end on their stated problem. */
   problemFix?: RewriteRecord | null;
+  /** After the length pass: introductions put back for numbers and names, and the reference repair. */
+  afterLength?: { restored: Orphan[]; repairs?: RepairRecord | null };
   /** Older reports stored these at the top level; kept so they still display. */
   repairs?: CheckRound["repairs"];
   rewrite?: RewriteRecord[] | null;
@@ -423,8 +452,23 @@ export async function generateReport(
     return out;
   };
   number(splitReport(final, REPORT_SPLIT_MARKER));
+  const everDeleted = lengthPasses.flatMap((lp) => lp.deleted);
+  const rejectedText = audit ? audit.rejected.flatMap((r) => [r.interpretation, r.quote]) : [];
 
-  /** Rewrites the given sections in one call and keeps each rewrite that passes the code checks. */
+  /** Whether the constraint's last sentence ties the belief to the stated problem; null if unknown. */
+  const judgeTie = async (constraint: string): Promise<{ connects: boolean; reason: string } | null> => {
+    if (!statedProblem || !constraint.trim()) return null;
+    try {
+      return parseProblemTie(
+        await callJSON(buildProblemTieSystem(), buildProblemTieInput(statedProblem, lastSentence(constraint)), PROBLEM_TIE_SCHEMA),
+      );
+    } catch (e) {
+      console.error("Stated problem judgment failed", e);
+      return null;
+    }
+  };
+
+  /** Rewrites the given sections in one call and keeps each rewrite that passes the checks. */
   const rewriteSections = async (
     targets: { section: SectionName; flagged: Violation[]; current: string; limit: number }[],
     paragraphCount: number,
@@ -437,27 +481,88 @@ export async function generateReport(
       parseRewrite,
     );
     let updated = splitReport(current, REPORT_SPLIT_MARKER);
-    const records = targets.map((t) => {
+    const records: RewriteRecord[] = [];
+    for (const t of targets) {
       const proposal = rewritten?.find((r) => r.section === t.section)?.text ?? null;
       const text = proposal === null ? null : stripDashes(proposal);
       const others = t.section.startsWith("paragraph")
         ? updated.narrative.split(/\n\s*\n/).map((x) => x.trim()).filter((x) => x && x !== t.current)
         : [];
-      const issues = text === null
-        ? ["no rewrite returned"]
-        : rewriteIssues(t.section, text, t.limit, personWords, t.current, others, statedProblem ?? "");
+      const issues = text === null ? ["no rewrite returned"] : rewriteIssues(t.section, text, t.limit, personWords, t.current, others);
+      // A constraint rewrite is kept only if its last sentence still ties
+      // the belief to the stated problem.
+      if (text !== null && issues.length === 0 && t.section === "constraint") {
+        const tie = await judgeTie(text);
+        if (tie && !tie.connects) issues.push("last sentence does not tie the belief to their stated problem: " + tie.reason);
+      }
       const accepted = issues.length === 0;
       if (accepted && text !== null) {
         updated = replaceSection(updated, t.section, text);
         // A rewritten protected section stays protected.
         number(updated);
       }
-      return { section: t.section, label: sectionLabel(t.section, paragraphCount), flagged: t.flagged, before: t.current, after: text, accepted, issues };
-    });
+      records.push({ section: t.section, label: sectionLabel(t.section, paragraphCount), flagged: t.flagged, before: t.current, after: text, accepted, issues });
+    }
     return { report: records.some((r) => r.accepted) ? joinReport(updated) : current, records };
   };
-  const everDeleted = lengthPasses.flatMap((lp) => lp.deleted);
-  const rejectedText = audit ? audit.rejected.flatMap((r) => [r.interpretation, r.quote]) : [];
+
+  /** Applies one-sentence replacements from a fix call, guarded like the reference repair. */
+  const applySentenceFixes = (proposals: { original: string; replacement: string }[]): RepairRecord => {
+    const parts = splitReport(current, REPORT_SPLIT_MARKER);
+    const sentences = number(parts);
+    const cleaned = proposals.map((r) => ({ original: r.original, replacement: stripDashes(r.replacement) }));
+    const outcome = applyRepairs(parts, sentences, cleaned, [...everDeleted, ...rejectedText]);
+    for (const a of outcome.applied) {
+      // A fixed protected sentence stays protected.
+      if (sentences.find((x) => x.text === a.original)?.locked) lockedKeys.add(sentenceKey(a.replacement));
+    }
+    if (outcome.applied.length > 0) current = joinReport(outcome.report);
+    return { applied: outcome.applied, skipped: outcome.skipped };
+  };
+
+  /** Repairs sentences left pointing at something a deletion removed. */
+  const repairReferences = async (lostEnding: string[], orphans: Orphan[]): Promise<RepairRecord | null> => {
+    const repairInput = buildRepairInput(transcript, everDeleted, rejectedText, current, lostEnding, orphans);
+    const first = await callFix(buildRepairSystem(), repairInput, REPAIR_SCHEMA, parseRepairs);
+    if (first === null) return null;
+    // A repair must name one sentence. A block of several is split into its
+    // changed sentences; one that can't be split is asked for again, once.
+    const split = splitRepairs(first, splitSentences);
+    let repairs = split.repairs;
+    if (split.unsplit.length > 0) {
+      const retry = await callFix(buildRepairSystem(), repairInput + RETRY_ONE_SENTENCE, REPAIR_SCHEMA, parseRepairs);
+      const second = retry === null ? { repairs: [], unsplit: split.unsplit } : splitRepairs(retry, splitSentences);
+      const have = new Set(repairs.map((r) => r.original));
+      repairs = [...repairs, ...second.repairs.filter((r) => !have.has(r.original)), ...second.unsplit];
+    }
+    const record = applySentenceFixes(repairs);
+    console.info("Report reference repair: " + record.applied.length + " applied, " + record.skipped.length + " skipped");
+    return record;
+  };
+
+  /** Numbers and names in the current report whose introduction is among the given deleted sentences. */
+  const orphansIn = (deleted: string[]): Orphan[] =>
+    findOrphans(number(splitReport(current, REPORT_SPLIT_MARKER)).map((x) => x.text), deleted, draft);
+
+  // After the length pass: put back the sentence that introduced a number or
+  // name a kept sentence still uses, then repair other dangling references.
+  // Only length-pass deletions are put back; they were cut for length, not
+  // because they were wrong.
+  let afterLength: ReportChecks["afterLength"];
+  if (everDeleted.length > 0) {
+    const orphans = orphansIn(everDeleted);
+    if (orphans.length > 0) {
+      current = joinReport(restoreIntroductions(splitReport(current, REPORT_SPLIT_MARKER), orphans));
+      const restored = new Set(orphans.map((o) => o.introducedBy));
+      everDeleted.splice(0, everDeleted.length, ...everDeleted.filter((d) => !restored.has(d)));
+      console.info("Report length pass: restored " + restored.size + " introducing sentence(s)");
+    }
+    afterLength = { restored: orphans };
+    if (everDeleted.length > 0) {
+      const lost = lostEndings(numberSentences(splitReport(draft, REPORT_SPLIT_MARKER)), current);
+      afterLength.repairs = await repairReferences(lost, []);
+    }
+  }
 
   if (audit) {
     for (let n = 1; n <= MAX_CHECKS; n++) {
@@ -466,8 +571,9 @@ export async function generateReport(
         console.warn("Report time budget reached; skipping further checks");
         break;
       }
-      const found = await checkReport(transcript, audit, current);
+      const isLast = n === MAX_CHECKS;
       let parts = splitReport(current, REPORT_SPLIT_MARKER);
+      const [found, tie] = await Promise.all([checkReport(transcript, audit, current), judgeTie(parts.constraint)]);
       let sentences = number(parts);
       const { kept: standing, withdrawn } = found === null ? { kept: null, withdrawn: [] } : dropWithdrawn(found);
       const { kept: modelFlags, dismissed } =
@@ -475,89 +581,78 @@ export async function generateReport(
       // Code checks run every round, even when the check call fails.
       const absolutes = findAbsoluteViolations(sentences, personWords);
       const duplicates = findDuplicateViolations(sentences);
-      const unanchored = findProblemViolations(parts, statedProblem);
-      const codeFlags = [...absolutes, ...duplicates, ...unanchored];
+      const thirdPerson = findPersonViolations(parts);
+      const unanchored: Violation[] = tie && !tie.connects
+        ? [{ quote: lastSentence(parts.constraint), kind: "stated_problem", reason: tie.reason }]
+        : [];
+      const codeFlags = [...absolutes, ...duplicates, ...thirdPerson, ...unanchored];
       const violations = modelFlags === null && codeFlags.length === 0 ? null : [...(modelFlags ?? []), ...codeFlags];
-      const round: CheckRound = { violations, withdrawn, dismissed, deleted: [], unfixable: [] };
+      const round: CheckRound = { violations, withdrawn, dismissed, deleted: [], unfixable: [], tie };
       rounds.push(round);
       if (violations === null || violations.length === 0) {
         console.info("Report check " + n + ": " + (violations === null ? "check failed" : "clean") + ", " + withdrawn.length + " withdrawn");
         break;
       }
       console.info("Report check " + n + ": " + violations.length + " violation(s), " + withdrawn.length + " withdrawn, " + dismissed.length + " dismissed");
-      // The last check only records what ships.
-      if (n === MAX_CHECKS) break;
 
-      // 1. Delete flagged sentences that aren't protected. An absolute is
-      //    never fixed by deleting its sentence (that could drop the
-      //    constraint's closing words); its section is rewritten instead.
+      // 1. Hedge sentences that state something more firmly than the person
+      //    did, instead of deleting them. A flag whose sentence isn't hedged
+      //    falls back to deletion, or to the rewrite if protected.
+      const hedgeFlags = (modelFlags ?? []).filter((v) => HEDGE_KINDS.includes(v.kind));
+      const otherFlags = (modelFlags ?? []).filter((v) => !HEDGE_KINDS.includes(v.kind));
+      if (hedgeFlags.length > 0) {
+        const targets = hedgeFlags.flatMap((v) => findQuotedSentences(sentences, v.quote).map((x) => ({ v, sentence: x.text, reason: v.reason })));
+        const proposals = targets.length === 0
+          ? null
+          : await callFix(buildHedgeSystem(), buildHedgeInput(transcript, targets), REPAIR_SCHEMA, parseRepairs);
+        round.hedges = proposals === null ? null : applySentenceFixes(splitRepairs(proposals, splitSentences).repairs);
+        const hedged = new Set(round.hedges?.applied.map((a) => a.original) ?? []);
+        for (const v of hedgeFlags) {
+          const mine = targets.filter((t) => t.v === v);
+          if (mine.length === 0 || !mine.every((t) => hedged.has(t.sentence))) otherFlags.push(v);
+        }
+        if (hedged.size > 0) {
+          parts = splitReport(current, REPORT_SPLIT_MARKER);
+          sentences = number(parts);
+        }
+      }
+
+      // 2. Delete flagged sentences that aren't protected. Absolutes, a
+      //    missing tie to the stated problem and a third person counter
+      //    belief are never fixed by deleting; their section is rewritten.
       //    Code-found flags name their exact sentence, so they are matched by
       //    text; matching a duplicate by quote would also hit the first copy.
-      const matched = matchViolations(sentences, modelFlags ?? []);
+      const matched = matchViolations(sentences, otherFlags);
       const deleteIds = [...matched.deleteIds];
-      const unfixable = [...matched.unfixable, ...absolutes, ...unanchored];
+      const unfixable = [...matched.unfixable, ...absolutes, ...thirdPerson, ...unanchored];
       for (const v of duplicates) {
-        const s = sentences.find((x) => x.text === v.quote);
-        if (s && !s.locked) deleteIds.push(s.id);
+        const x = sentences.find((y) => y.text === v.quote);
+        if (x && !x.locked) deleteIds.push(x.id);
         else unfixable.push(v);
       }
       const afterDelete = applyDeletions(sentences, deleteIds, parts, { onlyOverLimit: false });
       round.deleted = sentences.filter((x) => deleteIds.includes(x.id) && !afterDelete.includes(x.text)).map((x) => x.text);
       round.unfixable = unfixable;
-      // Narrative paragraphs whose last sentence was deleted but which still
-      // have others: the repair checks they still make their point.
-      const lostEnding: string[] = [];
-      const afterParts = splitReport(afterDelete, REPORT_SPLIT_MARKER);
-      const afterParas = afterParts.narrative.split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean);
-      for (const pi of new Set(sentences.filter((x) => x.part === "narrative").map((x) => x.paragraph))) {
-        const inPara = sentences.filter((x) => x.part === "narrative" && x.paragraph === pi);
-        const kept = inPara.filter((x) => afterDelete.includes(x.text));
-        if (kept.length > 0 && !afterDelete.includes(inPara.at(-1)!.text)) {
-          const para = afterParas.find((a) => a.endsWith(kept.at(-1)!.text));
-          if (para) lostEnding.push(para);
-        }
-      }
+      const lost = lostEndings(sentences, afterDelete);
       current = afterDelete;
       everDeleted.push(...round.deleted);
 
-      // 2. Repair sentences left pointing at something a deletion removed.
-      if (round.deleted.length > 0) {
-        parts = splitReport(current, REPORT_SPLIT_MARKER);
-        const repairInput = buildRepairInput(transcript, everDeleted, rejectedText, current, lostEnding);
-        let repairs = await callFix(buildRepairSystem(), repairInput, REPAIR_SCHEMA, parseRepairs);
-        if (repairs !== null) {
-          // A repair must name one sentence. A block of several is split into
-          // its changed sentences; one that can't be split is asked for again,
-          // once.
-          const first = splitRepairs(repairs, splitSentences);
-          repairs = first.repairs;
-          if (first.unsplit.length > 0) {
-            const retry = await callFix(buildRepairSystem(), repairInput + RETRY_ONE_SENTENCE, REPAIR_SCHEMA, parseRepairs);
-            const second = retry === null ? { repairs: [], unsplit: first.unsplit } : splitRepairs(retry, splitSentences);
-            const have = new Set(repairs.map((r) => r.original));
-            repairs = [...repairs, ...second.repairs.filter((r) => !have.has(r.original)), ...second.unsplit];
-          }
-        }
-        if (repairs === null) {
-          round.repairs = null;
-        } else {
-          const cleaned = repairs.map((r) => ({ original: r.original, replacement: stripDashes(r.replacement) }));
-          const outcome = applyRepairs(parts, number(parts), cleaned, [...everDeleted, ...rejectedText]);
-          round.repairs = { applied: outcome.applied, skipped: outcome.skipped };
-          if (outcome.applied.length > 0) current = joinReport(outcome.report);
-          console.info("Report reference repair: " + outcome.applied.length + " applied, " + outcome.skipped.length + " skipped");
-        }
-      }
+      // 3. Repair sentences left pointing at something a deletion removed,
+      //    including numbers and names whose introduction was deleted (a
+      //    flagged sentence is never put back).
+      if (round.deleted.length > 0) round.repairs = await repairReferences(lost, orphansIn(round.deleted));
 
-      // 3. Rewrite each section that holds a flagged protected sentence, at
-      //    most twice per section.
+      // 4. Rewrite each section that holds a flagged protected sentence, at
+      //    most twice per section. Not after the last check: a rewrite there
+      //    would ship unchecked.
+      if (isLast) break;
       parts = splitReport(current, REPORT_SPLIT_MARKER);
       sentences = number(parts);
       const flaggedBySection = new Map<SectionName, Violation[]>();
       for (const v of unfixable) {
-        // A code-found absolute is fixed by rewrite whether or not its sentence is locked.
-        const byText = v.kind === "absolute" || v.kind === "duplicate" || v.kind === "stated_problem";
+        const byText = ["absolute", "duplicate", "stated_problem", "third_person"].includes(v.kind);
         const hits = byText ? sentences.filter((x) => x.text === v.quote) : findQuotedSentences(sentences, v.quote);
+        // A code-found absolute is fixed by rewrite whether or not its sentence is locked.
         const sections = new Set(hits.filter((x) => x.locked || v.kind === "absolute").map(sectionOf));
         for (const sec of sections) {
           if ((rewriteCount.get(sec) ?? 0) >= 2) continue;
@@ -581,15 +676,17 @@ export async function generateReport(
     }
   }
 
-  // If the constraint still does not end on the person's stated problem, one
-  // more rewrite of it, supplying the phrase.
+  // If the constraint's last sentence still does not tie the belief to the
+  // stated problem, one more rewrite. It replaces the current constraint only
+  // if it passes the same judgment; otherwise the current one ships.
   let problemFix: RewriteRecord | null = null;
-  if (audit) {
+  if (audit && statedProblem) {
     const parts = splitReport(current, REPORT_SPLIT_MARKER);
-    const unanchored = findProblemViolations(parts, statedProblem);
-    if (unanchored.length > 0) {
+    const tie = await judgeTie(parts.constraint);
+    if (tie && !tie.connects) {
       const paragraphCount = parts.narrative.split(/\n\s*\n/).filter((x) => x.trim()).length;
-      const target = { section: "constraint" as SectionName, flagged: unanchored, current: parts.constraint, limit: sectionLimit(parts, "constraint") };
+      const flagged: Violation[] = [{ quote: lastSentence(parts.constraint), kind: "stated_problem", reason: tie.reason }];
+      const target = { section: "constraint" as SectionName, flagged, current: parts.constraint, limit: sectionLimit(parts, "constraint") };
       const outcome = await rewriteSections([target], paragraphCount);
       problemFix = outcome.records[0];
       current = outcome.report;
@@ -597,8 +694,26 @@ export async function generateReport(
     }
   }
 
-  const checks: ReportChecks = { lengthPasses, audit, rounds, timedOut, ms: Date.now() - started, statedProblem, problemFix };
+  const checks: ReportChecks = { lengthPasses, audit, rounds, timedOut, ms: Date.now() - started, statedProblem, problemFix, afterLength };
   return { raw: current, draft, ...splitReport(current, REPORT_SPLIT_MARKER), checks };
+}
+
+/**
+ * Narrative paragraphs whose last sentence was deleted but which still have
+ * others, as they now read, so the repair can check they still make a point.
+ */
+function lostEndings(before: Sentence[], after: string): string[] {
+  const out: string[] = [];
+  const paras = splitReport(after, REPORT_SPLIT_MARKER).narrative.split(/\n\s*\n/).map((x) => x.trim()).filter(Boolean);
+  for (const pi of new Set(before.filter((x) => x.part === "narrative").map((x) => x.paragraph))) {
+    const inPara = before.filter((x) => x.part === "narrative" && x.paragraph === pi);
+    const kept = inPara.filter((x) => after.includes(x.text));
+    if (kept.length > 0 && !after.includes(inPara.at(-1)!.text)) {
+      const para = paras.find((a) => a.endsWith(kept.at(-1)!.text));
+      if (para) out.push(para);
+    }
+  }
+  return out;
 }
 
 /** A structured call for the repair and rewrite steps; null if it fails. */

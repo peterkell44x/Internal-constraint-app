@@ -15,11 +15,13 @@
 //    loses its required opening or the word architecture, uses an absolute
 //    the person never used, or repeats another paragraph.
 //
-// It also holds three checks done by code rather than by the model: absolutes
+// It also holds the checks done by code rather than by the model: absolutes
 // (only, always, never, impossible...) in the constraint and counter belief
 // that the person never used, narrative sentences that repeat a run of words
-// from an earlier paragraph, and whether the constraint's last sentence names
-// the person's own stated problem.
+// from an earlier paragraph, a counter belief not in first person, and numbers
+// or names left without the sentence that introduced them. Whether the
+// constraint ends on the person's stated problem is judged by a model call
+// (PROBLEM_TIE_SCHEMA).
 //
 // Pure module (no imports besides types) so the tests can load it directly.
 
@@ -75,7 +77,9 @@ export function sectionText(parts: ReportParts, section: SectionName): string {
 /** The word limit for a rewritten section; a paragraph shares the narrative's limit. */
 export function sectionLimit(parts: ReportParts, section: SectionName): number {
   if (section === "constraint") return CONSTRAINT_MAX;
-  if (section === "counterBelief") return SECTION_MAX;
+  // The counter belief is locked, so the draft's can run past 75 words; a
+  // rewrite may be as long as the text it replaces.
+  if (section === "counterBelief") return Math.max(SECTION_MAX, countWords(parts.counterBelief));
   const rest = countWords(parts.narrative) - countWords(sectionText(parts, section));
   return Math.max(15, NARRATIVE_MAX - rest);
 }
@@ -210,53 +214,136 @@ export function parseProblem(text: string): string | null {
   }
 }
 
-// Words too common to show that a sentence is about the person's problem.
-const FILLER = new Set([
-  ...STOPWORDS_LIST,
-  ..."about all also am any because being can cant could did didnt dont doesnt even feel feels felt get gets getting got how im ive just keep keeps kept know like make makes made more much really should something still thing things think want wants wanted wanting way why would t s".split(" "),
-]);
-
-/** A rough stem so girl and girls, or saving and save, count as the same word. */
-function stem(w: string): string {
-  if (w.length > 5 && w.endsWith("ing")) return w.slice(0, -3);
-  if (w.length > 4 && w.endsWith("ed")) return w.slice(0, -2);
-  if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss")) return w.slice(0, -1);
-  return w;
-}
-
-function contentStems(text: string): Set<string> {
-  return new Set(normalize(text).split(" ").filter((w) => w && !FILLER.has(w)).map(stem));
-}
-
-/** The meaningful words a sentence shares with the stated problem. */
-export function problemWordsShared(sentence: string, statedProblem: string): string[] {
-  const p = contentStems(statedProblem);
-  return [...contentStems(sentence)].filter((w) => p.has(w));
-}
-
-/** True when a sentence shares at least two meaningful words with the stated problem. */
-export function tiesToProblem(sentence: string, statedProblem: string): boolean {
-  return problemWordsShared(sentence, statedProblem).length >= 2;
-}
-
 /** The last sentence of a text (same splitting rule as review.ts splitSentences). */
 export function lastSentence(text: string): string {
   return text.trim().split(/(?<=[.!?]["'”’)]?)\s+(?=\S)/).map((x) => x.trim()).filter(Boolean).at(-1) ?? "";
 }
 
+// Whether the constraint's last sentence ties the belief to the stated
+// problem is a judgment, so a model call makes it; a word overlap test passed
+// a sentence claiming a belief caused injuries and failed a good one.
+export const PROBLEM_TIE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["reason", "connects"],
+  properties: { reason: { type: "string" }, connects: { type: "boolean" } },
+} as const;
+
+export function buildProblemTieSystem(): string {
+  return "You check one sentence, the last sentence of the constraint section of a personal profile, against the problem the person said brought them here. Answer connects true only if both hold:\n"
+  + "1. The sentence connects the belief to what the person experiences around that stated problem, meaning how the belief makes them think, feel, or act about it. It does not have to repeat their words.\n"
+  + "2. It does not claim that the belief causes events outside the person's control, such as injuries, illness, other people's choices, or luck.\n"
+  + "Give a one sentence reason first, then the answer.";
+}
+
+export function buildProblemTieInput(statedProblem: string, sentence: string): string {
+  return "THEIR STATED PROBLEM\n" + statedProblem + "\n\nSENTENCE\n" + sentence;
+}
+
+export function parseProblemTie(text: string): { connects: boolean; reason: string } | null {
+  try {
+    const j = JSON.parse(text);
+    return typeof j?.connects === "boolean" ? { connects: j.connects, reason: String(j.reason ?? "") } : null;
+  } catch {
+    return null;
+  }
+}
+
+const FIRST_PERSON = /\b(i|i'm|im|i've|ive|me|my|mine|myself)\b/i;
+
+/** True when the counter belief's first sentence, the belief itself, is in first person. */
+export function counterIsFirstPerson(counterBelief: string): boolean {
+  const first = counterBelief.trim().split(/(?<=[.!?]["'”’)]?)\s+(?=\S)/)[0] ?? "";
+  return FIRST_PERSON.test(first.replace(COUNTER_PREFIX, ""));
+}
+
+/** Code check: a violation when the counter belief's belief sentence is not in first person. */
+export function findPersonViolations(parts: ReportParts): Violation[] {
+  if (!parts.counterBelief.trim() || counterIsFirstPerson(parts.counterBelief)) return [];
+  const first = parts.counterBelief.trim().split(/(?<=[.!?]["'”’)]?)\s+(?=\S)/)[0];
+  return [{ quote: first, kind: "third_person", reason: "the counter belief must be stated in first person, as the person's own belief" }];
+}
+
+// ---------------------------------------------------------------------------
+// Numbers and names used without their introduction
+
+/** Numbers written in digits, and capitalised words that are not the first word of the sentence. */
+export function termsOf(sentence: string): string[] {
+  const out = new Set<string>();
+  for (const m of sentence.matchAll(/\d[\d,]*(?:\.\d+)?/g)) out.add(m[0].replace(/,/g, ""));
+  const words = sentence.replace(/^[^A-Za-z0-9]*(Your subconscious internal constraint is:|The counter belief is:)?/, "").split(/\s+/);
+  words.slice(1).forEach((w) => {
+    const m = w.match(/^["'“‘(]?([A-Z][a-z]+)/);
+    if (m && !["I", "Im", "Ive"].includes(m[1])) out.add(m[1]);
+  });
+  return [...out];
+}
+
+function hasTerm(text: string, term: string): boolean {
+  return /^\d/.test(term)
+    ? new RegExp("(^|[^\\d.,])" + term.replace(/\./g, "\\.") + "(?![\\d])").test(text.replace(/(\d),(\d)/g, "$1$2"))
+    : new RegExp("\\b" + term + "\\b").test(text);
+}
+
+export interface Orphan {
+  term: string;
+  /** The first current sentence that uses the term. */
+  usedIn: string;
+  /** The deleted sentence that introduced it in the draft. */
+  introducedBy: string;
+}
+
 /**
- * Code check of the constraint: a violation when its last sentence does not
- * name the person's stated problem.
+ * Numbers and names whose first use in the current report comes after the
+ * sentence that introduced them in the draft was deleted, for example "resets
+ * you back to 125" after "You started at 125 pounds" was cut. `sentences` is
+ * the current report in order.
  */
-export function findProblemViolations(parts: ReportParts, statedProblem: string | null): Violation[] {
-  if (!statedProblem || !parts.constraint.trim()) return [];
-  const last = lastSentence(parts.constraint);
-  if (tiesToProblem(last, statedProblem)) return [];
-  return [{
-    quote: last,
-    kind: "stated_problem",
-    reason: 'the constraint does not end by naming their stated problem ("' + statedProblem + '")',
-  }];
+export function findOrphans(sentences: string[], deleted: string[], draft: string): Orphan[] {
+  const out: Orphan[] = [];
+  const seen = new Set<string>();
+  sentences.forEach((sentence, i) => {
+    for (const term of termsOf(sentence)) {
+      if (seen.has(term)) continue;
+      seen.add(term);
+      if (sentences.slice(0, i).some((x) => hasTerm(x, term))) continue;
+      const usedAt = draft.indexOf(sentence);
+      const intro = deleted.find((d) => {
+        const at = draft.indexOf(d);
+        return hasTerm(d, term) && at >= 0 && (usedAt < 0 || at < usedAt);
+      });
+      if (intro) out.push({ term, usedIn: sentence, introducedBy: intro });
+    }
+  });
+  return out;
+}
+
+/** Puts each orphan's introducing sentence back, just before the sentence that first uses its term. */
+export function restoreIntroductions(parts: ReportParts, orphans: Orphan[]): ReportParts {
+  let out = { ...parts };
+  const done = new Set<string>();
+  for (const o of orphans) {
+    if (done.has(o.introducedBy)) continue;
+    done.add(o.introducedBy);
+    for (const part of ["narrative", "constraint", "counterBelief"] as const) {
+      if (out[part].includes(o.usedIn)) {
+        out = { ...out, [part]: out[part].replace(o.usedIn, o.introducedBy + " " + o.usedIn) };
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Hedging a sentence that states more firmly than the person did
+
+export function buildHedgeSystem(): string {
+  return "A fact check found sentences in a written profile that state something more firmly than the person did in the conversation: something they were unsure about stated as fact, or something said more broadly, more often, or more exactly than they said it, such as dropping their maybe or turning one example into every time. For each flagged sentence, give the sentence exactly as it appears in the profile and a replacement that says the same thing only as firmly as the person did, for example by adding you said, you think, maybe, or once, or by giving the one example they gave. Change as few words as possible, keep everything else the same, and add no new facts. Keep any required opening words, such as Your subconscious internal constraint is: or The counter belief is:. Never use any dash character. Return one repair per flagged sentence.";
+}
+
+export function buildHedgeInput(transcript: string, flagged: { sentence: string; reason: string }[]): string {
+  return "CONVERSATION\n\n" + transcript + "\n\nFLAGGED SENTENCES\n" + flagged.map((f) => '- "' + f.sentence + '" (' + f.reason + ")").join("\n");
 }
 
 /**
@@ -272,7 +359,6 @@ export function rewriteIssues(
   personWords: string,
   original = "",
   otherParagraphs: string[] = [],
-  statedProblem = "",
 ): string[] {
   const issues: string[] = [];
   const t = text.trim();
@@ -283,9 +369,7 @@ export function rewriteIssues(
   const n = countWords(t);
   if (n > limit) issues.push("over the word limit (" + n + " of " + limit + ")");
   for (const w of absolutesNotSaid(t, personWords)) issues.push('uses "' + w + '", which the person never said');
-  if (section === "constraint" && statedProblem && t && !tiesToProblem(lastSentence(t), statedProblem)) {
-    issues.push("last sentence does not name their stated problem");
-  }
+  if (section === "counterBelief" && t && !counterIsFirstPerson(t)) issues.push("the belief is not in first person");
   if (section.startsWith("paragraph")) {
     for (const other of otherParagraphs) {
       const run = sharedRun(other, t);
@@ -331,12 +415,12 @@ export function buildRewriteSystem(reportTitle: string, goalPhrase: string): str
   + "Do not use only, always, never, impossible, unsafe, permanent, permanently, forever, every time, or any similar absolute unless the person used that word themselves.\n"
   + "Do not repeat a sentence or a run of words that already appears in another part of the profile.\n"
   + "Do not add a cause, consequence, or detail the person did not state.\n"
-  + "Stay at or under the section's word limit.\n"
+  + "Stay at or under the section's word limit, which is given with each section. Count the words of your text before returning it; a text over its limit is thrown away and the flagged text stays.\n"
   + "Never use any dash character, not a hyphen used as a pause, not two hyphens together, not an em dash or en dash. Use a period or a comma.\n"
   + "Write in second person, plain and direct, matching the voice of the rest of the profile.\n"
   + "Every sentence must read as normal prose that someone would actually say. Do not stitch fragments of the person's answers together or string quoted phrases into a list, and make sure every it, that, or this clearly points to something named in the same or the previous sentence.\n\n"
-  + "constraint: start with the exact words " + CONSTRAINT_PREFIX + " then name the belief inside what the person confirmed, and how it stands between them and " + goalPhrase + ", only as far as what they said supports. End the section with a sentence saying that this belief is what keeps their stated problem going, using the words given under THEIR STATED PROBLEM. That last sentence must name the problem itself, not refer to it as it or that. If the current text already ends this way, keep that ending. To stay inside the word limit, trim elsewhere in the section, never these closing words. This is a statement about the belief, never a promise of a result.\n"
-  + "counterBelief: start with the exact words " + COUNTER_PREFIX + " then answer that same belief in first person, then give one action they can do and check off this week that tests the belief and produces something tangible they can point to afterward, such as a record, a number, or a message sent, not only writing down thoughts. Say which part of their stated problem the action tests. Never promise that the action or the new belief will bring a result such as peace, money, or a relationship.\n"
+  + "constraint: start with the exact words " + CONSTRAINT_PREFIX + " then name the belief inside what the person confirmed, and how it stands between them and " + goalPhrase + ", only as far as what they said supports. End the section with a sentence that connects this belief to what they experience around the problem given under THEIR STATED PROBLEM, meaning how the belief makes them think, feel, or act about it. Never claim that the belief causes events outside their control, such as injuries, illness, other people's choices, or luck. The sentence does not need to repeat their words, and it must read naturally. If the current text already ends this way, keep that ending. To stay inside the word limit, trim elsewhere in the section, never these closing words. This is a statement about the belief, never a promise of a result.\n"
+  + "counterBelief: start with the exact words " + COUNTER_PREFIX + " then answer that same belief in first person, as the person's own belief using I, me, or my, never he, she, or they, then give one action they can do and check off this week that tests the belief and produces something tangible they can point to afterward, such as a record, a number, or a message sent, not only writing down thoughts. You may say which part of their stated problem the action tests, but only in your own natural words and only if it reads naturally; never paste the stated problem in word for word. Never promise that the action or the new belief will bring a result such as peace, money, or a relationship.\n"
   + "paragraph sections (paragraph1, paragraph2 and so on): one paragraph of the narrative. Keep its role in the profile, for example the closing shift or where they stand today, state it in plain words using only what was confirmed, and if its current text uses the word architecture, keep that word once.\n\n"
   + "Rewrite only the sections listed, return each with its new text, and use the section names exactly as given.";
 }
@@ -399,6 +483,7 @@ export const REPAIR_SCHEMA = {
 
 export function buildRepairSystem(): string {
   return "Some sentences were deleted from a written profile because they were inaccurate or too long. Your job is to find remaining sentences that no longer make sense on their own because they refer to something that was only introduced in a deleted sentence, for example a pronoun, that belief, this pattern, the same move, or a person or idea that is now never introduced.\n\n"
+  + "Also fix any sentence that uses a number or a name listed under TERMS USED WITHOUT AN INTRODUCTION: make it understandable on its own, using only what the person said.\n\n"
   + "Also, for each paragraph listed as having lost its last sentence, check that what remains still makes its point. If it now ends on a setup with no point, give a repair of its new last sentence that completes the point using only what the person said or confirmed.\n\n"
   + "For each sentence to fix, give exactly one sentence, copied exactly as it appears in the current profile, never a block of several sentences; if two sentences need fixing, give two repairs. Then give a minimal replacement that makes it understandable on its own. Change as few words as possible. Use only facts the person stated in the conversation. Do not bring back any claim from the deleted sentences or anything on the rejected list, in any wording; if the sentence can only make sense by bringing one back, give the shortest neutral replacement instead, such as naming the person or thing in plain words. Keep any required opening words, such as Your subconscious internal constraint is: or The counter belief is:. Never use any dash character.\n\n"
   + "Do not list sentences that already make sense. If there are none, return an empty list.";
@@ -410,10 +495,12 @@ export function buildRepairInput(
   rejected: string[],
   report: string,
   lostEnding: string[] = [],
+  orphans: { term: string; usedIn: string }[] = [],
 ): string {
   return "CONVERSATION\n\n" + transcript + "\n\nDELETED SENTENCES\n" + deleted.map((d) => "- " + d).join("\n")
     + "\n\nREJECTED BY THE PERSON\n" + (rejected.length ? rejected.map((r) => "- " + r).join("\n") : "(none)")
     + "\n\nPARAGRAPHS THAT LOST THEIR LAST SENTENCE\n" + (lostEnding.length ? lostEnding.map((p) => "- " + p).join("\n") : "(none)")
+    + "\n\nTERMS USED WITHOUT AN INTRODUCTION\n" + (orphans.length ? orphans.map((o) => "- " + o.term + ' in "' + o.usedIn + '"').join("\n") : "(none)")
     + "\n\nCURRENT PROFILE\n\n" + report;
 }
 

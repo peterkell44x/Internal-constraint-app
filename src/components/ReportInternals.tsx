@@ -76,15 +76,15 @@ function AuditView({ audit }: { audit: Audit | null }) {
   );
 }
 
-function RepairsView({ repairs }: { repairs: CheckRound["repairs"] }) {
+function RepairsView({ repairs, title = "Reference repair" }: { repairs: CheckRound["repairs"]; title?: string }) {
   if (repairs === undefined) return null;
-  if (repairs === null) return <p className="muted small">Reference repair: the call failed.</p>;
+  if (repairs === null) return <p className="muted small">{title}: the call failed.</p>;
   if (repairs.applied.length + repairs.skipped.length === 0) {
-    return <p className="muted small">Reference repair: no sentence referred to anything deleted.</p>;
+    return <p className="muted small">{title}: nothing to change.</p>;
   }
   return (
     <>
-      <p className="small">Reference repair:</p>
+      <p className="small">{title}:</p>
       <ul className="internals-list">
         {repairs.applied.map((r, i) => (
           <li key={"a" + i}>
@@ -131,7 +131,7 @@ function RewriteView({ rewrite }: { rewrite: RewriteRecord[] | null | undefined 
 }
 
 function RoundView({ r, i, isLast }: { r: CheckRound; i: number; isLast: boolean }) {
-  const fixed = r.deleted.length > 0 || r.repairs !== undefined || (r.rewrite?.length ?? 0) > 0;
+  const fixed = r.deleted.length > 0 || r.repairs !== undefined || r.hedges !== undefined || (r.rewrite?.length ?? 0) > 0;
   return (
     <div className="internals-round">
       <p className="small">
@@ -140,6 +140,11 @@ function RoundView({ r, i, isLast }: { r: CheckRound; i: number; isLast: boolean
         {isLast && r.violations && r.violations.length > 0 && !fixed && " (last check: these shipped)"}
       </p>
       {r.violations && r.violations.length > 0 && <ViolationList items={r.violations} />}
+      {r.tie && (
+        <p className="small">
+          Constraint&rsquo;s last sentence {r.tie.connects ? "ties" : "does not tie"} the belief to your stated problem: {r.tie.reason}
+        </p>
+      )}
       {(r.withdrawn ?? []).length > 0 && (
         <>
           <p className="small">Withdrawn by the checker (ignored):</p>
@@ -160,6 +165,7 @@ function RoundView({ r, i, isLast }: { r: CheckRound; i: number; isLast: boolean
           </ul>
         </>
       )}
+      <RepairsView repairs={r.hedges} title="Hedged to match how sure you were" />
       <RepairsView repairs={r.repairs} />
       <RewriteView rewrite={r.rewrite} />
       {r.unfixable.length > 0 && !(r.rewrite && r.rewrite.length > 0) && (
@@ -224,6 +230,28 @@ export default function ReportInternals({ draft, checks }: Props) {
             ))
           )}
 
+          {c.afterLength && (
+            <>
+              <h3>After the length pass</h3>
+              {c.afterLength.restored.length === 0 ? (
+                <p className="muted small">No number or name lost its introduction.</p>
+              ) : (
+                <>
+                  <p className="small">Put back because a later sentence uses what they introduced:</p>
+                  <ul className="internals-list">
+                    {c.afterLength.restored.map((o, i) => (
+                      <li key={i}>
+                        <span className="pill">{o.term}</span> &ldquo;{o.introducedBy}&rdquo;
+                        <div className="muted small">used in &ldquo;{o.usedIn}&rdquo;</div>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              <RepairsView repairs={c.afterLength.repairs} />
+            </>
+          )}
+
           <h3>Checks and fixes</h3>
           {rounds.length === 0 ? (
             <p className="muted small">No check ran (the audit failed).</p>
@@ -272,8 +300,8 @@ export default function ReportInternals({ draft, checks }: Props) {
                 ? "the last check failed, so what shipped is unverified."
                 : last.violations.length === 0
                 ? "the last check was clean."
-                : last.deleted.length > 0 || last.repairs !== undefined || (last.rewrite?.length ?? 0) > 0
-                ? "fixes were applied after the last check and were not re-checked (the time budget ran out)."
+                : last.deleted.length > 0 || last.repairs !== undefined || last.hedges !== undefined || (last.rewrite?.length ?? 0) > 0
+                ? "fixes were applied after the last check and were not re-checked."
                 : "the last check's flags above shipped."}
             </p>
           )}
