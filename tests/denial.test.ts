@@ -4,7 +4,7 @@ import { test } from "node:test";
 import {
   AUDIT_SCHEMA,
   buildCheckInput,
-  buildRejectedNote,
+  buildAuditNote,
   CHECK_SCHEMA,
   dropWithdrawn,
   formatTranscript,
@@ -57,10 +57,11 @@ test("schemas are strict objects, as structured output requires", () => {
   }
 });
 
-test("audit and check prompts treat idk as neither rejected nor confirmed", async () => {
+test("audit and check prompts put hedged answers on the unsure list, not rejected or confirmed", async () => {
   const { buildAuditSystem, buildCheckSystem } = await import("../src/lib/diagnostic/denial.ts");
-  assert.match(buildAuditSystem(), /Uncertainty is neither/);
-  assert.match(buildAuditSystem(), /idk, not sure, maybe/);
+  assert.match(buildAuditSystem(), /Everything hedged goes on uncertain/);
+  assert.match(buildAuditSystem(), /yeah kind of, maybe, i guess so/);
+  assert.match(buildAuditSystem(), /Never put the whole idea on rejected because of a but/);
   assert.match(buildCheckSystem(), /answered with idk or uncertainty is not a rejection/);
 });
 
@@ -188,13 +189,30 @@ test("every check is told what the person was unsure about", () => {
   assert.ok((CHECK_SCHEMA.properties.violations.items.properties.kind.enum as readonly string[]).includes("uncertain"));
 });
 
-test("the draft is given the rejected list, and nothing when there is none", () => {
-  const note = buildRejectedNote({
-    rejected: [{ interpretation: "His parents' acceptance of decline is linked to his three month cycle", quote: "stretch", answer: "no" }],
+test("the draft is given the rejected and unsure lists, and nothing when both are empty", () => {
+  const note = buildAuditNote({
+    rejected: [{ interpretation: "Six days a week is demanding", quote: "yeah kind of but i dont see 6 days a week as demanding", answer: "no" }],
     confirmed: [],
+    uncertain: [{ interpretation: "His identity is tied to going all in", quote: "yeah kind of but i dont see 6 days a week as demanding" }],
   });
   assert.match(note, /Nothing on this list may be used as the architecture, the spine of the narrative, the constraint, or the final paragraph/);
-  assert.match(note, /- His parents' acceptance of decline is linked to his three month cycle \(they said: "stretch"\)/);
-  assert.equal(buildRejectedNote({ rejected: [], confirmed: [] }), "");
-  assert.equal(buildRejectedNote(null), "");
+  assert.match(note, /- Six days a week is demanding \(they said: "yeah kind of but/);
+  assert.match(note, /UNSURE\. .*only with hedged wording/);
+  assert.match(note, /- His identity is tied to going all in \(they said:/);
+  assert.equal(buildAuditNote({ rejected: [], confirmed: [], uncertain: [] }), "");
+  assert.equal(buildAuditNote(null), "");
+});
+
+test("parseAudit keeps the audit's own unsure list alongside answers labelled uncertain", () => {
+  const a = parseAudit(JSON.stringify({
+    rejected: [
+      { interpretation: "Six days a week is demanding", quote: "yeah kind of but i dont see 6 days a week as demanding", answer: "no" },
+      { interpretation: "there is a constraint", quote: "idk", answer: "uncertain" },
+    ],
+    confirmed: [],
+    uncertain: [{ interpretation: "His identity is tied to going all in", quote: "yeah kind of" }],
+  }))!;
+  assert.deepEqual(a.rejected.map((r) => r.interpretation), ["Six days a week is demanding"]);
+  assert.deepEqual(a.uncertain!.map((u) => u.interpretation), ["His identity is tied to going all in", "there is a constraint"]);
+  assert.ok((AUDIT_SCHEMA.required as readonly string[]).includes("uncertain"));
 });

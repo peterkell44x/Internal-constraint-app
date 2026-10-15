@@ -19,7 +19,7 @@ import type { Sentence } from "./review";
 export interface Audit {
   rejected: { interpretation: string; quote: string; answer?: "no" | "correction" | "uncertain" }[];
   confirmed: { link: string; quote: string }[];
-  /** Answers labelled uncertain with no clear denial in them. Not rejections, but every check flags them if the report states them as fact. */
+  /** Hedged answers ("yeah kind of", "maybe"). Not rejections; the report may use them only with hedged wording, and every check flags them stated as fact. */
   uncertain?: { interpretation: string; quote: string }[];
 }
 
@@ -61,7 +61,7 @@ const str = { type: "string" };
 export const AUDIT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["rejected", "confirmed"],
+  required: ["rejected", "confirmed", "uncertain"],
   properties: {
     rejected: {
       type: "array",
@@ -83,6 +83,15 @@ export const AUDIT_SCHEMA = {
         additionalProperties: false,
         required: ["link", "quote"],
         properties: { link: str, quote: str },
+      },
+    },
+    uncertain: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["interpretation", "quote"],
+        properties: { interpretation: str, quote: str },
       },
     },
   },
@@ -113,22 +122,32 @@ export const CHECK_SCHEMA = {
 } as const;
 
 export function buildAuditSystem(): string {
-  return "You are auditing a diagnostic conversation between a GUIDE and a PERSON. Nothing you write is shown to the person. Produce two lists.\n\n"
+  return "You are auditing a diagnostic conversation between a GUIDE and a PERSON. Nothing you write is shown to the person. Produce three lists.\n\n"
   + "rejected: every interpretation, explanation, or link that was put to the person, by the guide or as a possibility, and that the person rejected, denied, corrected, or answered no to. For each, give the interpretation in plain words, the person's exact words, and label their answer: no for a clear no or denial, correction for when they gave a different answer instead, or uncertain for idk, not sure, maybe, or not knowing. If an answer is partly unsure but clearly denies something, for example maybe one thing, but I do not think it is that, label it no for what it denies.\n\n"
   + "confirmed: every link between two things that the person stated themselves or clearly agreed to when it was put to them. A link can be between something from their past and something they do now, between a feeling and a behavior, between two behaviors, or a reason they gave for something they did. For each, give the link in plain words and the person's exact words. Agreement must be clear, such as yes, that is it, or saying it in their own words. Silence, idk, changing the subject, or answering a different question is not agreement. A link only the guide stated is not confirmed.\n\n"
-  + "Uncertainty is neither. If the person answered idk, not sure, maybe, or said they do not know, do not put it on either list. Only a clear no, a denial, or a correction is a rejection, and only clear agreement or their own statement is a confirmation.\n\n"
-  + "Be literal and strict. Do not infer what they meant. Either list can be empty.";
+  + "uncertain: every interpretation, explanation, or link put to the person that they answered with hedged or partial agreement, or with not knowing, such as yeah kind of, maybe, i guess so, sort of, i think so, not sure, or idk. For each, give the interpretation in plain words and the person's exact words. Hedged agreement is neither a confirmation nor a rejection.\n\n"
+  + "When one answer partly agrees and partly denies, split it. For example, to the idea that their identity is tied to going all in, the answer yeah kind of but i dont see six days a week as demanding goes on two lists: the part after but, that six days a week is demanding, goes on rejected, and the part they hedged on, that their identity is tied to going all in, goes on uncertain. Use the same quote for both. Never put the whole idea on rejected because of a but.\n\n"
+  + "Only a clear no, a denial, or a correction is a rejection, and only clear agreement or their own statement is a confirmation. Everything hedged goes on uncertain.\n\n"
+  + "Be literal and strict. Do not infer what they meant. Any list can be empty.";
 }
 
 /**
- * Added to the report draft's instructions: the audit's rejected list. A
- * prompt rule alone ("anything they said no to") did not stop the draft
- * building its architecture on a link the person had called a stretch.
+ * Added to the report draft's instructions: the audit's rejected and unsure
+ * lists. A prompt rule alone ("anything they said no to") did not stop the
+ * draft building its architecture on a link the person had called a stretch.
  */
-export function buildRejectedNote(audit: Audit | null): string {
-  if (!audit || audit.rejected.length === 0) return "";
-  return "\n\nREJECTED BY THE PERSON. In the conversation they said no to, denied, or corrected each of these. Nothing on this list may be used as the architecture, the spine of the narrative, the constraint, or the final paragraph, and none of it may appear anywhere in the profile, in any wording:\n"
-    + audit.rejected.map((r) => "- " + r.interpretation + ' (they said: "' + r.quote + '")').join("\n");
+export function buildAuditNote(audit: Audit | null): string {
+  if (!audit) return "";
+  let note = "";
+  if (audit.rejected.length > 0) {
+    note += "\n\nREJECTED BY THE PERSON. In the conversation they said no to, denied, or corrected each of these. Nothing on this list may be used as the architecture, the spine of the narrative, the constraint, or the final paragraph, and none of it may appear anywhere in the profile, in any wording:\n"
+      + audit.rejected.map((r) => "- " + r.interpretation + ' (they said: "' + r.quote + '")').join("\n");
+  }
+  if ((audit.uncertain ?? []).length > 0) {
+    note += "\n\nUNSURE. The person was unsure about each of these. In the narrative, use them only with hedged wording that shows they were unsure, such as you said kind of or you think, never as fact. The constraint, as your inference, may build on them:\n"
+      + (audit.uncertain ?? []).map((u) => "- " + u.interpretation + ' (they said: "' + u.quote + '")').join("\n");
+  }
+  return note;
 }
 
 export function buildAuditInput(transcript: string): string {
@@ -141,9 +160,10 @@ export function buildCheckSystem(): string {
   + "rejected: states, implies, or rewords anything on the rejected list. Only items on that list count as rejected; a question the person answered with idk or uncertainty is not a rejection.\n"
   + "unconfirmed_link: presents a link, cause, pattern, or same move between separate things the person said, or turns one thing they said or did into a general pattern of how they operate, when that link is not on the confirmed list and the person did not state it themselves.\n"
   + "not_said: states as fact something about the person or anyone in their life that the person never said, such as an event, number, feeling, motive, or a consequence that rests on a fact about their situation they never stated.\n"
-  + "uncertain: states as fact, in any wording, anything on the uncertain list. The person was unsure about these, for example they answered yeah i think, maybe, or idk, so the profile must not present them as true, as something about them, or as the reason for something.\n"
+  + "uncertain: states as fact, in any wording, anything on the uncertain list. The person was unsure about these, for example they answered yeah i think, maybe, or idk, so the profile must not present them as true, as something about them, or as the reason for something. Mentioning one with hedged wording, such as you said kind of, is fine.\n"
   + "overstated: states something the person did say, but more firmly, more broadly, more often, or more exactly than they said it, for example dropping their maybe, turning since 18, maybe even 12 into a firm age, or turning one example they gave into every time.\n\n"
   + "Before flagging a number, amount, age, or duration, read every message from the person. Numbers can be written as digits or words and ranges can be written as 4-5 or four to five; these mean the same thing.\n\n"
+  + "The constraint section, which starts with Your subconscious internal constraint is:, is an inference by design. Do not flag it as unconfirmed_link, not_said, or uncertain just because the person never stated that belief themselves; it may be built from what they confirmed and what they were unsure about. Still flag it if it states or rewords anything on the rejected list, or if it claims where the belief came from, such as a parent or an event in their past, when the person did not confirm that.\n\n"
   + "Do not flag: things the person said, links on the confirmed list and how they play out, what a single thing the person said means in their own framing, the suggested action in the counter belief section, or wording and style. When in doubt whether the person said something, check the conversation.\n\n"
   + "For each violation, quote the exact sentence or clause from the profile and give a short reason. Then set stands_behind: true only if, after checking the conversation, you still hold that it is a violation. If while writing the reason you find the person did say it, or you change your mind, leave the item out, or set stands_behind to false. Items with stands_behind false are ignored. If there are none, return an empty list.";
 }
@@ -178,9 +198,12 @@ export function parseAudit(text: string): Audit | null {
     // label says.
     const keep = (r: Audit["rejected"][number]) => r.answer !== "uncertain" || containsDenial(r.quote);
     const rejected = j.rejected.filter(keep);
-    const uncertain = j.rejected
-      .filter((r: Audit["rejected"][number]) => !keep(r))
-      .map((r: Audit["rejected"][number]) => ({ interpretation: r.interpretation, quote: r.quote }));
+    const uncertain = [
+      ...(Array.isArray(j.uncertain) ? j.uncertain : []),
+      ...j.rejected
+        .filter((r: Audit["rejected"][number]) => !keep(r))
+        .map((r: Audit["rejected"][number]) => ({ interpretation: r.interpretation, quote: r.quote })),
+    ];
     return { rejected, confirmed: j.confirmed, uncertain };
   } catch {
     return null;
