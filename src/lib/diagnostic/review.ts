@@ -14,7 +14,7 @@
 
 import type { Domain } from "./domains";
 
-export const NARRATIVE_MAX_WORDS = 260;
+export const NARRATIVE_MAX_WORDS = 340;
 export const SECTION_MAX_WORDS = 75;
 // The constraint gets more room than the counter belief, for the closing words
 // that name the person's own stated problem.

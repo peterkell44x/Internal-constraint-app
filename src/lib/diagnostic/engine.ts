@@ -54,6 +54,8 @@ import {
   buildRewriteInput,
   buildHedgeInput,
   buildHedgeSystem,
+  buildTrimInput,
+  buildTrimSystem,
   buildProblemSystem,
   buildProblemTieInput,
   buildProblemTieSystem,
@@ -351,6 +353,9 @@ const CHECK_MAX_TOKENS = 4000;
 // is not checked again.
 const MAX_CHECKS = 3;
 
+// How many words a hedged replacement may add to its sentence.
+const HEDGE_MAX_ADDED = 25;
+
 // The reference-repair and section-rewrite replies are short.
 const FIX_MAX_TOKENS = 3000;
 
@@ -384,6 +389,8 @@ export interface CheckRound {
   rewrite?: RewriteRecord[] | null;
   /** Sentences stated more firmly than the person did, rewritten to match. */
   hedges?: RepairRecord | null;
+  /** Unprotected narrative sentences with an unconfirmed part, trimmed to what was confirmed. */
+  trims?: RepairRecord | null;
   /** Whether the constraint's last sentence ties the belief to the stated problem; null if not judged. */
   tie?: { connects: boolean; reason: string } | null;
 }
@@ -459,6 +466,8 @@ export async function generateReport(
   };
   number(splitReport(final, REPORT_SPLIT_MARKER));
   const everDeleted = lengthPasses.flatMap((lp) => lp.deleted);
+  // Sentences produced by trimming; a trimmed sentence flagged again is deleted.
+  const trimmedKeys = new Set<string>();
   const rejectedText = audit ? audit.rejected.flatMap((r) => [r.interpretation, r.quote]) : [];
 
   /** Whether the constraint's last sentence ties the belief to the stated problem; null if unknown. */
@@ -529,11 +538,11 @@ export async function generateReport(
   };
 
   /** Applies one-sentence replacements from a fix call, guarded like the reference repair. */
-  const applySentenceFixes = (proposals: { original: string; replacement: string }[]): RepairRecord => {
+  const applySentenceFixes = (proposals: { original: string; replacement: string }[], maxAdded?: number): RepairRecord => {
     const parts = splitReport(current, REPORT_SPLIT_MARKER);
     const sentences = number(parts);
     const cleaned = proposals.map((r) => ({ original: r.original, replacement: stripDashes(r.replacement) }));
-    const outcome = applyRepairs(parts, sentences, cleaned, [...everDeleted, ...rejectedText]);
+    const outcome = applyRepairs(parts, sentences, cleaned, [...everDeleted, ...rejectedText], maxAdded);
     for (const a of outcome.applied) {
       // A fixed protected sentence stays protected.
       if (sentences.find((x) => x.text === a.original)?.locked) lockedKeys.add(sentenceKey(a.replacement));
@@ -627,7 +636,9 @@ export async function generateReport(
         const proposals = targets.length === 0
           ? null
           : await callFix(buildHedgeSystem(), buildHedgeInput(transcript, targets), REPAIR_SCHEMA, parseRepairs);
-        round.hedges = proposals === null ? null : applySentenceFixes(splitRepairs(proposals, splitSentences).repairs);
+        // A hedge may add up to 25 words; at the usual 15, a hedged version
+        // was refused as adding too much and the sentence was deleted instead.
+        round.hedges = proposals === null ? null : applySentenceFixes(splitRepairs(proposals, splitSentences).repairs, HEDGE_MAX_ADDED);
         const hedged = new Set(round.hedges?.applied.map((a) => a.original) ?? []);
         for (const v of hedgeFlags) {
           const mine = targets.filter((t) => t.v === v);
@@ -639,7 +650,33 @@ export async function generateReport(
         }
       }
 
-      // 2. Delete flagged sentences that aren't protected. Absolutes, a
+      // 2. In checks before the last, an unconfirmed link or unsaid detail in
+      //    an unprotected narrative sentence is trimmed to what the person
+      //    confirmed instead of deleted. The trimmed sentence is checked next
+      //    round; if it is flagged again, it is deleted.
+      if (!isLast) {
+        const trimFlags = otherFlags.filter((v) => {
+          if (v.kind !== "unconfirmed_link" && v.kind !== "not_said") return false;
+          const hits = findQuotedSentences(sentences, v.quote);
+          return hits.length > 0 && hits.every((x) => x.part === "narrative" && !x.locked && !trimmedKeys.has(sentenceKey(x.text)));
+        });
+        if (trimFlags.length > 0) {
+          const targets = trimFlags.flatMap((v) => findQuotedSentences(sentences, v.quote).map((x) => ({ v, sentence: x.text, reason: v.reason })));
+          const proposals = await callFix(buildTrimSystem(), buildTrimInput(transcript, targets), REPAIR_SCHEMA, parseRepairs);
+          round.trims = proposals === null ? null : applySentenceFixes(splitRepairs(proposals, splitSentences).repairs);
+          const trimmed = new Set(round.trims?.applied.map((a) => a.original) ?? []);
+          for (const a of round.trims?.applied ?? []) trimmedKeys.add(sentenceKey(a.replacement));
+          for (const v of trimFlags) {
+            if (targets.filter((t) => t.v === v).every((t) => trimmed.has(t.sentence))) otherFlags.splice(otherFlags.indexOf(v), 1);
+          }
+          if (trimmed.size > 0) {
+            parts = splitReport(current, REPORT_SPLIT_MARKER);
+            sentences = number(parts);
+          }
+        }
+      }
+
+      // 3. Delete flagged sentences that aren't protected. Absolutes, a
       //    missing tie to the stated problem and a third person counter
       //    belief are never fixed by deleting; their section is rewritten.
       //    Code-found flags name their exact sentence, so they are matched by
@@ -659,12 +696,12 @@ export async function generateReport(
       current = afterDelete;
       everDeleted.push(...round.deleted);
 
-      // 3. Repair sentences left pointing at something a deletion removed,
+      // 4. Repair sentences left pointing at something a deletion removed,
       //    including numbers and names whose introduction was deleted (a
       //    flagged sentence is never put back).
       if (round.deleted.length > 0) round.repairs = await repairReferences(lost, orphansIn(round.deleted));
 
-      // 4. Rewrite each section that holds a flagged protected sentence, at
+      // 5. Rewrite each section that holds a flagged protected sentence, at
       //    most twice per section. Not after the last check: a rewrite there
       //    would ship unchecked.
       if (isLast) break;

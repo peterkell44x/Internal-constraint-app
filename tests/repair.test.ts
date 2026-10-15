@@ -52,7 +52,7 @@ test("sectionLimit gives a paragraph whatever the narrative has left", () => {
   assert.equal(sectionLimit(long, "counterBelief"), 89);
   const narrativeWords = parts.narrative.split(/\s+/).filter(Boolean).length;
   const shiftWords = sectionText(parts, "paragraph5").split(/\s+/).length;
-  assert.equal(sectionLimit(parts, "paragraph5"), 260 - (narrativeWords - shiftWords));
+  assert.equal(sectionLimit(parts, "paragraph5"), 340 - (narrativeWords - shiftWords));
 });
 
 test("rewriteIssues rejects a missing opening, going over the limit, and absolutes the person never used", () => {
@@ -222,7 +222,7 @@ test("applyRepairs will not cut a protected sentence down", () => {
   assert.equal(out.skipped[0].reason, "cuts too much from a protected sentence");
 });
 
-test("a paragraph rewrite may go up to 20 words over its limit while the narrative stays within 280", () => {
+test("a paragraph rewrite may go up to 20 words over its limit while the narrative stays within 360", () => {
   // Distinct words per call, so paragraphs never share a run of words.
   let tag = 0;
   const words = (n: number) => {
@@ -235,8 +235,8 @@ test("a paragraph rewrite may go up to 20 words over its limit while the narrati
   // 20 over is still fine; 21 over is not.
   assert.deepEqual(rewriteIssues("paragraph3", words(54), 34, "", "", others), []);
   assert.ok(rewriteIssues("paragraph3", words(55), 34, "", "", others).some((i) => i.startsWith("over the word limit (55 of 34")));
-  // Within the paragraph's slack, but the whole narrative would pass 280.
-  assert.ok(rewriteIssues("paragraph3", words(30), 15, "", "", [words(140), words(120)]).some((i) => i.startsWith("narrative over 280")));
+  // Within the paragraph's slack, but the whole narrative would pass 360.
+  assert.ok(rewriteIssues("paragraph3", words(30), 15, "", "", [words(200), words(150)]).some((i) => i.startsWith("narrative over 360")));
   // Every other check still applies to a rewrite within the slack.
   assert.ok(rewriteIssues("paragraph3", words(34) + " It never ends.", 34, "", "", others).some((i) => i.includes('"never"')));
   assert.ok(rewriteIssues("paragraph3", others[0], 34, "", "", others).some((i) => i.startsWith("repeats")));
@@ -257,4 +257,11 @@ test("findAbsoluteViolations also checks the final narrative paragraph, but no o
   const v = findAbsoluteViolations(numberSentences(r), "i keep stopping");
   assert.deepEqual(v.map((x) => x.quote), ["You made consistency impossible by only accepting one definition."]);
   assert.match(v[0].reason, /"only", "impossible"/);
+});
+
+test("a hedge may add up to 25 words when allowed, the default stays 15", () => {
+  const target = byStart("You heard it often");
+  const longer = target.text.replace(".", "") + " " + Array.from({ length: 22 }, (_, i) => "extra" + String.fromCharCode(97 + i)).join(" ") + ".";
+  assert.equal(applyRepairs(parts, sentences, [{ original: target.text, replacement: longer }]).skipped[0].reason, "replacement adds too much");
+  assert.equal(applyRepairs(parts, sentences, [{ original: target.text, replacement: longer }], [], 25).applied.length, 1);
 });

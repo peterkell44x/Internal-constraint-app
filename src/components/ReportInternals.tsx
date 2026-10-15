@@ -132,7 +132,7 @@ function RewriteView({ rewrite }: { rewrite: RewriteRecord[] | null | undefined 
 }
 
 function RoundView({ r, i, isLast }: { r: CheckRound; i: number; isLast: boolean }) {
-  const fixed = r.deleted.length > 0 || r.repairs !== undefined || r.hedges !== undefined || (r.rewrite?.length ?? 0) > 0;
+  const fixed = r.deleted.length > 0 || r.repairs !== undefined || r.hedges !== undefined || r.trims !== undefined || (r.rewrite?.length ?? 0) > 0;
   return (
     <div className="internals-round">
       <p className="small">
@@ -167,6 +167,7 @@ function RoundView({ r, i, isLast }: { r: CheckRound; i: number; isLast: boolean
         </>
       )}
       <RepairsView repairs={r.hedges} title="Hedged to match how sure you were" />
+      <RepairsView repairs={r.trims} title="Trimmed to what you confirmed" />
       <RepairsView repairs={r.repairs} />
       <RewriteView rewrite={r.rewrite} />
       {r.unfixable.length > 0 && !(r.rewrite && r.rewrite.length > 0) && (

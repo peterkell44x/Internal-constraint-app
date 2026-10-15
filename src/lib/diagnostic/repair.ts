@@ -28,7 +28,7 @@
 import type { Audit, Violation } from "./denial";
 import type { ReportParts, Sentence } from "./review";
 
-export const NARRATIVE_MAX = 260;
+export const NARRATIVE_MAX = 340;
 export const SECTION_MAX = 75;
 export const CONSTRAINT_MAX = 100;
 // A paragraph rewrite may run this many words over its limit, as long as the
@@ -343,6 +343,17 @@ export function restoreIntroductions(parts: ReportParts, orphans: Orphan[]): Rep
 }
 
 // ---------------------------------------------------------------------------
+// Trimming a sentence down to what the person confirmed
+
+export function buildTrimSystem(): string {
+  return "A fact check flagged sentences in a written profile because each one adds a cause, link, or detail the person never said or confirmed. For each flagged sentence, give the sentence exactly as it appears in the profile and a replacement that keeps only what the person said or confirmed in the conversation and drops the unconfirmed part. For example, When you tried calisthenics as a workaround, it stopped too, because it was not the real thing becomes When you tried calisthenics as a workaround, it stopped too. Change as few words as possible and add nothing new. If nothing confirmed is left once the unconfirmed part is dropped, give an empty replacement. Never use any dash character. Return one repair per flagged sentence.";
+}
+
+export function buildTrimInput(transcript: string, flagged: { sentence: string; reason: string }[]): string {
+  return "CONVERSATION\n\n" + transcript + "\n\nFLAGGED SENTENCES\n" + flagged.map((f) => '- "' + f.sentence + '" (' + f.reason + ")").join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // Hedging a sentence that states more firmly than the person did
 
 export function buildHedgeSystem(): string {
@@ -608,6 +619,7 @@ export function applyRepairs(
   sentences: Sentence[],
   repairs: { original: string; replacement: string }[],
   forbidden: string[] = [],
+  maxAdded = 15,
 ): RepairOutcome {
   let report = { ...parts };
   const applied: RepairOutcome["applied"] = [];
@@ -620,7 +632,7 @@ export function applyRepairs(
     else if (!replacement) reason = "empty replacement";
     else if (target.text.startsWith(CONSTRAINT_PREFIX) && !replacement.startsWith(CONSTRAINT_PREFIX)) reason = "dropped the required opening";
     else if (target.text.startsWith(COUNTER_PREFIX) && !replacement.startsWith(COUNTER_PREFIX)) reason = "dropped the required opening";
-    else if (countWords(replacement) > countWords(target.text) + 15) reason = "replacement adds too much";
+    else if (countWords(replacement) > countWords(target.text) + maxAdded) reason = "replacement adds too much";
     else if (target.locked && countWords(replacement) < countWords(target.text) - 5) reason = "cuts too much from a protected sentence";
     else {
       const back = reintroducedPhrase(target.text, replacement, forbidden);

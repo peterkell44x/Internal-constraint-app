@@ -31,6 +31,13 @@ async function post(url: string, body?: unknown): Promise<DiagnosticView> {
   return data as DiagnosticView;
 }
 
+// The answer limit, as HARD_CEILING in src/lib/diagnostic/prompts.ts. Not
+// imported, so the prompt text stays out of the browser bundle.
+const ANSWER_LIMIT = 16;
+// At the limit the server answers at once with a fixed closing line; the
+// typing indicator shows this long first so it feels less automatic.
+const CLOSING_PAUSE_MS = 2000;
+
 export default function DiagnosticSession({ initial, subtitle, reportTitle }: Props) {
   const router = useRouter();
   const [view, setView] = useState(initial);
@@ -113,7 +120,9 @@ export default function DiagnosticSession({ initial, subtitle, reportTitle }: Pr
     setBubbles((b) => [...b, { role: "user", content: val }]);
     setThinking(true);
     try {
-      applyView(await post(base + "/messages", { text: val, userTurns: view.userTurns }));
+      const next = await post(base + "/messages", { text: val, userTurns: view.userTurns });
+      if (next.status === "ready" && next.userTurns >= ANSWER_LIMIT) await new Promise((r) => setTimeout(r, CLOSING_PAUSE_MS));
+      applyView(next);
     } catch (e) {
       // Nothing was saved; put the answer back so it can be resent.
       setBubbles((b) => [...b.slice(0, -1), { role: "error", content: (e as Error).message }]);

@@ -19,12 +19,12 @@ import { splitReport } from "../src/lib/diagnostic/text.ts";
 const good = "Story here.\n[SPLIT]\nYour subconscious internal constraint is: X.\n[SPLIT]\nThe counter belief is: Y.";
 const words = (n: number) => Array.from({ length: n }, () => "w").join(" ");
 
-// A realistic over-length report: narrative ~300 words in 4 paragraphs, the
+// A realistic over-length report: narrative ~400 words in 4 paragraphs, the
 // last a short closing line like a real report's "one shift".
 const sentence = (tag: string) => "This is sentence " + tag + " with " + words(16) + ".";
 const para = (p: number, n: number) => Array.from({ length: n }, (_, i) => sentence(p + "." + i)).join(" ");
 const longReport =
-  [para(1, 7), 'He said "idle hands are the devil\'s workshop." The architecture was built over years.', para(3, 7), "That is the shift."].join("\n\n") +
+  [para(1, 11), 'He said "idle hands are the devil\'s workshop." The architecture was built over years.', para(3, 7), "That is the shift."].join("\n\n") +
   "\n\n[SPLIT]\n\nYour subconscious internal constraint is: Rest means you are about to be caught. This keeps you working.\n\n[SPLIT]\n\nThe counter belief is: Stopping is safe. Take one day off this week. That proves it.";
 const parts = (raw: string): ReportParts => splitReport(raw, "[SPLIT]");
 
@@ -40,9 +40,9 @@ test("isWellFormed requires three parts with the exact openings", () => {
   assert.ok(!isWellFormed(good + "\n[SPLIT]\nextra"));
 });
 
-test("isOverLimits uses 260 for the narrative, 100 for the constraint and 75 for the counter belief", () => {
-  assert.ok(!isOverLimits({ narrative: words(260), constraint: words(100), counterBelief: words(75) }));
-  assert.ok(isOverLimits({ narrative: words(261), constraint: words(10), counterBelief: words(10) }));
+test("isOverLimits uses 340 for the narrative, 100 for the constraint and 75 for the counter belief", () => {
+  assert.ok(!isOverLimits({ narrative: words(340), constraint: words(100), counterBelief: words(75) }));
+  assert.ok(isOverLimits({ narrative: words(341), constraint: words(10), counterBelief: words(10) }));
   assert.ok(isOverLimits({ narrative: words(10), constraint: words(101), counterBelief: words(10) }));
   assert.ok(isOverLimits({ narrative: words(10), constraint: words(10), counterBelief: words(76) }));
 });
@@ -97,7 +97,7 @@ test("cuts never reorder, merge, reword, or add text, whatever the model asks fo
 
 test("only parts that are over their limit can lose sentences", () => {
   const p = parts(longReport);
-  assert.ok(countWords(p.narrative) > 260 && countWords(p.constraint) <= 75);
+  assert.ok(countWords(p.narrative) > 340 && countWords(p.constraint) <= 75);
   const s = numberSentences(p);
   const all = s.map((x) => x.id);
   const out = parts(applyDeletions(s, all, p));
@@ -138,7 +138,7 @@ test("paragraph breaks are preserved and emptied paragraphs disappear", () => {
 test("cut input shows counts, OVER flags, and locks", () => {
   const p = parts(longReport);
   const input = buildCutInput(numberSentences(p), p);
-  assert.match(input, /NARRATIVE: \d+ words, limit 260, OVER, delete at least \d+ words/);
+  assert.match(input, /NARRATIVE: \d+ words, limit 340, OVER, delete at least \d+ words/);
   assert.match(input, /CONSTRAINT SECTION: \d+ words, limit 100, within limit, do not delete from this part/);
   assert.match(input, /COUNTER BELIEF SECTION: \d+ words, limit 75, /);
   assert.match(input, /\(\d+ words, LOCKED\) The architecture was built over years\./);
