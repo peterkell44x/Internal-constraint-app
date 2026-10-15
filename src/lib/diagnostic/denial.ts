@@ -23,7 +23,7 @@ export interface Audit {
   uncertain?: { interpretation: string; quote: string }[];
 }
 
-// The first five come from the check call; "absolute", "duplicate" and
+// The first six come from the check call; "absolute", "duplicate" and
 // "third_person" are found by code (repair.ts), and "stated_problem" by a
 // separate judgment call.
 export type ViolationKind =
@@ -32,6 +32,7 @@ export type ViolationKind =
   | "not_said"
   | "uncertain"
   | "overstated"
+  | "repeated"
   | "absolute"
   | "duplicate"
   | "third_person"
@@ -112,7 +113,7 @@ export const CHECK_SCHEMA = {
         required: ["quote", "kind", "reason", "stands_behind"],
         properties: {
           quote: str,
-          kind: { type: "string", enum: ["rejected", "unconfirmed_link", "not_said", "uncertain", "overstated"] },
+          kind: { type: "string", enum: ["rejected", "unconfirmed_link", "not_said", "uncertain", "overstated", "repeated"] },
           reason: str,
           stands_behind: { type: "boolean" },
         },
@@ -161,7 +162,8 @@ export function buildCheckSystem(): string {
   + "unconfirmed_link: presents a link, cause, pattern, or same move between separate things the person said, or turns one thing they said or did into a general pattern of how they operate, when that link is not on the confirmed list and the person did not state it themselves.\n"
   + "not_said: states as fact something about the person or anyone in their life that the person never said, such as an event, number, feeling, motive, or a consequence that rests on a fact about their situation they never stated.\n"
   + "uncertain: states as fact, in any wording, anything on the uncertain list. The person was unsure about these, for example they answered yeah i think, maybe, or idk, so the profile must not present them as true, as something about them, or as the reason for something. Mentioning one with hedged wording, such as you said kind of, is fine.\n"
-  + "overstated: states something the person did say, but more firmly, more broadly, more often, or more exactly than they said it, for example dropping their maybe, turning since 18, maybe even 12 into a firm age, or turning one example they gave into every time.\n\n"
+  + "overstated: states something the person did say, but more firmly, more broadly, more often, or more exactly than they said it, for example dropping their maybe, turning since 18, maybe even 12 into a firm age, or turning one example they gave into every time.\n"
+  + "repeated: a sentence or paragraph in the narrative that restates an idea already made elsewhere in the narrative, even in different words. Quote the later one; the first one stays.\n\n"
   + "Before flagging a number, amount, age, or duration, read every message from the person. Numbers can be written as digits or words and ranges can be written as 4-5 or four to five; these mean the same thing.\n\n"
   + "The constraint section, which starts with Your subconscious internal constraint is:, is an inference by design. Do not flag it as unconfirmed_link, not_said, or uncertain just because the person never stated that belief themselves; it may be built from what they confirmed and what they were unsure about. Still flag it if it states or rewords anything on the rejected list, or if it claims where the belief came from, such as a parent or an event in their past, when the person did not confirm that.\n\n"
   + "Do not flag: things the person said, links on the confirmed list and how they play out, what a single thing the person said means in their own framing, the suggested action in the counter belief section, or wording and style. When in doubt whether the person said something, check the conversation.\n\n"

@@ -216,3 +216,9 @@ test("parseAudit keeps the audit's own unsure list alongside answers labelled un
   assert.deepEqual(a.uncertain!.map((u) => u.interpretation), ["His identity is tied to going all in", "there is a constraint"]);
   assert.ok((AUDIT_SCHEMA.required as readonly string[]).includes("uncertain"));
 });
+
+test("the check can flag a sentence that restates an idea made elsewhere in the narrative", async () => {
+  const { buildCheckSystem } = await import("../src/lib/diagnostic/denial.ts");
+  assert.ok((CHECK_SCHEMA.properties.violations.items.properties.kind.enum as readonly string[]).includes("repeated"));
+  assert.match(buildCheckSystem(), /repeated: a sentence or paragraph in the narrative that restates an idea already made elsewhere/);
+});
