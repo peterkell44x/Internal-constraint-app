@@ -35,6 +35,7 @@ import {
   buildAuditSystem,
   buildCheckInput,
   buildCheckSystem,
+  buildRejectedNote,
   CHECK_SCHEMA,
   dismissNumberFalsePositives,
   dropWithdrawn,
@@ -433,13 +434,12 @@ export async function generateReport(
   const transcript = formatTranscript(history, BEGIN_MESSAGE);
   const personWords = history.filter((m, i) => m.role === "user" && i > 0).map((m) => m.content).join("\n");
 
-  // The audit and the stated problem only need the conversation, so they run
-  // alongside the draft.
-  const [{ draft, final, lengthPasses }, audit, statedProblem] = await Promise.all([
-    draftAndCut(domain, reportMsgs, system, deadline),
-    auditConversation(transcript),
-    extractProblem(transcript),
-  ]);
+  // The audit and the stated problem only need the conversation. The draft
+  // waits for the audit so it can be given the list of what the person
+  // rejected; told only to avoid "anything they said no to", it still built
+  // its architecture on a rejected link.
+  const [audit, statedProblem] = await Promise.all([auditConversation(transcript), extractProblem(transcript)]);
+  const { draft, final, lengthPasses } = await draftAndCut(domain, reportMsgs, system + buildRejectedNote(audit), deadline);
 
   let current = final;
   let timedOut = false;

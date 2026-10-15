@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   AUDIT_SCHEMA,
   buildCheckInput,
+  buildRejectedNote,
   CHECK_SCHEMA,
   dropWithdrawn,
   formatTranscript,
@@ -185,4 +186,15 @@ test("every check is told what the person was unsure about", () => {
   }, "Report.");
   assert.match(input, /UNSURE, MUST NOT BE STATED AS FACT\n- He believed it before Hamza said it \(person: "yeah i think"\)/);
   assert.ok((CHECK_SCHEMA.properties.violations.items.properties.kind.enum as readonly string[]).includes("uncertain"));
+});
+
+test("the draft is given the rejected list, and nothing when there is none", () => {
+  const note = buildRejectedNote({
+    rejected: [{ interpretation: "His parents' acceptance of decline is linked to his three month cycle", quote: "stretch", answer: "no" }],
+    confirmed: [],
+  });
+  assert.match(note, /Nothing on this list may be used as the architecture, the spine of the narrative, the constraint, or the final paragraph/);
+  assert.match(note, /- His parents' acceptance of decline is linked to his three month cycle \(they said: "stretch"\)/);
+  assert.equal(buildRejectedNote({ rejected: [], confirmed: [] }), "");
+  assert.equal(buildRejectedNote(null), "");
 });

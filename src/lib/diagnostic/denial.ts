@@ -120,6 +120,17 @@ export function buildAuditSystem(): string {
   + "Be literal and strict. Do not infer what they meant. Either list can be empty.";
 }
 
+/**
+ * Added to the report draft's instructions: the audit's rejected list. A
+ * prompt rule alone ("anything they said no to") did not stop the draft
+ * building its architecture on a link the person had called a stretch.
+ */
+export function buildRejectedNote(audit: Audit | null): string {
+  if (!audit || audit.rejected.length === 0) return "";
+  return "\n\nREJECTED BY THE PERSON. In the conversation they said no to, denied, or corrected each of these. Nothing on this list may be used as the architecture, the spine of the narrative, the constraint, or the final paragraph, and none of it may appear anywhere in the profile, in any wording:\n"
+    + audit.rejected.map((r) => "- " + r.interpretation + ' (they said: "' + r.quote + '")').join("\n");
+}
+
 export function buildAuditInput(transcript: string): string {
   return "CONVERSATION\n\n" + transcript;
 }
