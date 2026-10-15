@@ -135,13 +135,16 @@ export function absolutesNotSaid(text: string, personWords: string): string[] {
 }
 
 /**
- * Code check of the constraint and counter belief: one violation per sentence
- * that uses an absolute the person never used.
+ * Code check of the constraint, the counter belief and the final narrative
+ * paragraph: one violation per sentence that uses an absolute the person
+ * never used.
  */
 export function findAbsoluteViolations(sentences: Sentence[], personWords: string): Violation[] {
   const out: Violation[] = [];
+  const lastParagraph = Math.max(-1, ...sentences.filter((s) => s.part === "narrative").map((s) => s.paragraph));
   for (const s of sentences) {
-    if (s.part !== "constraint" && s.part !== "counterBelief") continue;
+    const finalParagraph = s.part === "narrative" && s.paragraph === lastParagraph;
+    if (s.part !== "constraint" && s.part !== "counterBelief" && !finalParagraph) continue;
     const found = absolutesNotSaid(s.text, personWords);
     if (found.length > 0) {
       out.push({ quote: s.text, kind: "absolute", reason: "uses " + found.map((w) => '"' + w + '"').join(", ") + ", which the person never said" });
@@ -431,7 +434,7 @@ export function buildRewriteSystem(reportTitle: string, goalPhrase: string): str
   + "Write in second person, plain and direct, matching the voice of the rest of the profile.\n"
   + "Every sentence must read as normal prose that someone would actually say. Do not stitch fragments of the person's answers together or string quoted phrases into a list, and make sure every it, that, or this clearly points to something named in the same or the previous sentence.\n\n"
   + "constraint: start with the exact words " + CONSTRAINT_PREFIX + " then name the belief inside what the person confirmed, and how it stands between them and " + goalPhrase + ", only as far as what they said supports. The constraint must be a belief, not a description of the pattern or of what happened. It is an inference: build it from the confirmed and unsure lists, never from anything rejected, and never claim where it came from unless the person confirmed that. It should sit at the level of priority or identity rather than restate a conscious belief the person already said outright. End the section with a sentence that connects this belief to what they experience around the problem given under THEIR STATED PROBLEM, meaning how the belief makes them think, feel, or act about it. Never claim that the belief causes events outside their control, such as injuries, illness, other people's choices, or luck. The sentence does not need to repeat their words, and it must read naturally. If the current text already ends this way, keep that ending. To stay inside the word limit, trim elsewhere in the section, never these closing words. This is a statement about the belief, never a promise of a result.\n"
-  + "counterBelief: start with the exact words " + COUNTER_PREFIX + " then answer that same belief in first person, as the person's own belief using I, me, or my, never he, she, or they, then give one action they can do and check off this week that tests the belief and produces something tangible they can point to afterward, such as a record, a number, or a message sent, not only writing down thoughts. The counter belief must not restate what the person already told you they know, already do, or were just taught, such as a mentor's advice, and the action must test the belief in a way that is new to them. You may say which part of their stated problem the action tests, but only in your own natural words and only if it reads naturally; never paste the stated problem in word for word. Never promise that the action or the new belief will bring a result such as peace, money, or a relationship.\n"
+  + "counterBelief: start with the exact words " + COUNTER_PREFIX + " then answer that same belief in first person, as the person's own belief using I, me, or my, never he, she, or they, then give one action they can do and check off this week that tests the belief and produces something tangible they can point to afterward, such as a record, a number, or a message sent, not only writing down thoughts. The counter belief must not restate what the person already told you they know, already do, or were just taught, such as a mentor's advice, and the action must test the belief in a way that is new to them. You may say which part of their stated problem the action tests, but only in your own natural words and only if it reads naturally; never paste the stated problem in word for word. When the pattern is stopping completely under pressure, the action should be to decide in advance the minimum version they will do no matter what, sized for their worst week, and commit to it before the next disruption. Never promise that the action or the new belief will bring a result such as peace, money, or a relationship.\n"
   + "paragraph sections (paragraph1, paragraph2 and so on): one paragraph of the narrative. Keep its role in the profile, for example the closing shift or where they stand today, state it in plain words using only what was confirmed, and if its current text uses the word architecture, keep that word once.\n\n"
   + "Rewrite only the sections listed, return each with its new text, and use the section names exactly as given.";
 }

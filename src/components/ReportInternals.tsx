@@ -206,6 +206,17 @@ export default function ReportInternals({ draft, checks }: Props) {
           <h3>Audit of the conversation</h3>
           <AuditView audit={c.audit ?? null} />
 
+          {c.draftNote !== undefined && (
+            <>
+              <h3>What the draft was told from the audit</h3>
+              {c.draftNote === "" ? (
+                <p className="muted small">Nothing: the rejected and unsure lists were both empty, or the audit failed.</p>
+              ) : (
+                <pre className="internals-pre">{c.draftNote.trim()}</pre>
+              )}
+            </>
+          )}
+
           {c.statedProblem !== undefined && (
             <>
               <h3>Your stated problem</h3>

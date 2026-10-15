@@ -248,3 +248,13 @@ test("the retry note gives each rejected section its exact word limit and reason
   const note = rewriteRetryNote([{ section: "paragraph3", limit: 34, issues: ["over the word limit (60 of 34, plus 20 allowed)"] }]);
   assert.match(note, /SECTION paragraph3: rejected because over the word limit \(60 of 34, plus 20 allowed\)\. Its exact word limit is 34 words\./);
 });
+
+test("findAbsoluteViolations also checks the final narrative paragraph, but no other", () => {
+  const r = splitReport(
+    "You never stop early.\n\nYou made consistency impossible by only accepting one definition.\n\n[SPLIT]\n\nYour subconscious internal constraint is: X.\n\n[SPLIT]\n\nThe counter belief is: I can. Do it.",
+    "[SPLIT]",
+  );
+  const v = findAbsoluteViolations(numberSentences(r), "i keep stopping");
+  assert.deepEqual(v.map((x) => x.quote), ["You made consistency impossible by only accepting one definition."]);
+  assert.match(v[0].reason, /"only", "impossible"/);
+});

@@ -404,6 +404,8 @@ export interface ReportChecks {
   statedProblem?: string | null;
   /** The rewrite after the checks when the constraint still did not end on their stated problem. */
   problemFix?: RewriteRecord | null;
+  /** What the draft was told from the audit: the rejected and unsure lists ("" if both were empty). */
+  draftNote?: string;
   /** After the length pass: introductions put back for numbers and names, and the reference repair. */
   afterLength?: { restored: Orphan[]; repairs?: RepairRecord | null };
   /** Older reports stored these at the top level; kept so they still display. */
@@ -439,7 +441,8 @@ export async function generateReport(
   // rejected and was unsure about; told only to avoid "anything they said no
   // to", it still built its architecture on a rejected link.
   const [audit, statedProblem] = await Promise.all([auditConversation(transcript), extractProblem(transcript)]);
-  const { draft, final, lengthPasses } = await draftAndCut(domain, reportMsgs, system + buildAuditNote(audit), deadline);
+  const draftNote = buildAuditNote(audit);
+  const { draft, final, lengthPasses } = await draftAndCut(domain, reportMsgs, system + draftNote, deadline);
 
   let current = final;
   let timedOut = false;
@@ -713,7 +716,7 @@ export async function generateReport(
     }
   }
 
-  const checks: ReportChecks = { lengthPasses, audit, rounds, timedOut, ms: Date.now() - started, statedProblem, problemFix, afterLength };
+  const checks: ReportChecks = { lengthPasses, audit, rounds, timedOut, ms: Date.now() - started, statedProblem, problemFix, afterLength, draftNote };
   return { raw: current, draft, ...splitReport(current, REPORT_SPLIT_MARKER), checks };
 }
 
