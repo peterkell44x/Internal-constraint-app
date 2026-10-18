@@ -6,6 +6,8 @@ import { db } from "@/lib/db";
 import { isDomainKey, type DomainKey } from "./domains";
 import type { ChatMessage } from "./engine";
 import { BEGIN_MESSAGE } from "./prompts";
+import { parseFlow, type Flow } from "./v2/flow";
+import type { ArchitectReport } from "./v2/schema";
 
 export type DiagnosticStatus = "in_progress" | "ready" | "generating" | "completed";
 
@@ -37,6 +39,31 @@ export interface DiagnosticView {
   generationStale: boolean;
   /** Why the last report attempt failed, if it did. */
   reportError: string | null;
+  /** 1: the retired open chat; 2: the Architect diagnosis. */
+  version: number;
+  /** Version 2: answers, taps and reactions so far (debug fields left out). */
+  flow: Flow | null;
+  /** Version 2: the report cards and bullets. The hidden tie is debug only and not included. */
+  architectReport: Omit<ArchitectReport, "hidden_tie"> | null;
+  /** Version 2: a reaction came back with the crisis flag. */
+  crisis: boolean;
+}
+
+/** The flow without debug fields, as the browser may see it. */
+function publicFlow(d: Diagnostic): Flow {
+  const f = parseFlow(d.flow);
+  return { ...f, reactions: f.reactions.map((r) => ({ step: r.step, text: r.text, crisis: r.crisis })) };
+}
+
+function publicReport(d: Diagnostic): Omit<ArchitectReport, "hidden_tie"> | null {
+  if (d.status !== "completed" || !d.reportJson) return null;
+  const r = d.reportJson as unknown as ArchitectReport;
+  return { sections: r.sections, old_bullets: r.old_bullets, new_bullets: r.new_bullets };
+}
+
+/** Converts a flow into the JSON column's input type. */
+export function flowJson(f: Flow): Prisma.InputJsonValue {
+  return f as unknown as Prisma.InputJsonValue;
 }
 
 export function historyOf(d: Diagnostic): ChatMessage[] {
@@ -66,6 +93,10 @@ export function toView(d: Diagnostic): DiagnosticView {
     reportStartedAt: d.status === "generating" && d.reportStartedAt ? d.reportStartedAt.toISOString() : null,
     generationStale: isStaleGeneration(d),
     reportError: d.reportError ?? null,
+    version: d.version,
+    flow: d.version === 2 ? publicFlow(d) : null,
+    architectReport: d.version === 2 ? publicReport(d) : null,
+    crisis: d.crisis,
   };
 }
 

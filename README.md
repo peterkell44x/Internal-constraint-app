@@ -8,6 +8,19 @@ This first phase has:
 - **The diagnostic engine**, ported from the standalone prototype with the same behavior.
 - **Saved reports:** every completed diagnostic is stored on the user's account. Unfinished conversations are saved too and can be picked up later.
 
+## The Architect diagnosis (current)
+
+New diagnoses use a fixed 10-step flow (code in `src/lib/diagnostic/v2/`, stored as `version = 2`):
+
+- **Questions:** 8 fixed questions per domain, then 2 Yes / No taps, with a progress bar. After each answer, and after the first tap, the AI writes a short reaction. A halfway screen comes after the reaction to answer 5.
+- **Saving and resume:** every step is saved, and a reload continues at the same step.
+- **Report:** after the last tap, one AI call writes a 12-card report (4 sections of 3 cards) plus Old pattern / New pattern bullets.
+- **Checks:** every number and quoted phrase must come from the answers. There is no banned wording, no repeated sentence, and no shared 8-word phrase between cards. A failing card is rewritten once, then the failing sentences are deleted, and a card under 40 words is rewritten once. Then one AI fact check runs (retried once); the sentences it flags are deleted.
+- **Prompts:** every AI instruction and all question text is in one file, `src/lib/diagnostic/v2/prompts.ts`, to be tuned after real runs.
+- **Crisis:** a reaction with `crisis: true` shows a 988 support line and makes the report SENSITIVE.
+- **Debug view:** for `REPORT_DEBUG_EMAILS`, it shows the hidden tie, the repeated words passed to each reaction, retries, rewritten cards, deleted sentences and whether the AI check succeeded.
+- **Old pipeline:** the open-ended chat and its multi-round report pipeline (described below) are retired. Their files are kept for rollback, and earlier reports (`version = 1`) still open in the old format.
+
 ## Stack
 
 - **Next.js 16** (App Router, TypeScript), for both the UI and the backend route handlers

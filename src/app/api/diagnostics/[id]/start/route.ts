@@ -8,6 +8,8 @@ export async function POST(_req: Request, ctx: RouteContext<"/api/diagnostics/[i
   if (user instanceof Response) return user;
   const d = await findOwnedDiagnostic((await ctx.params).id, user.id);
   if (!d) return jsonError(404, "Not found.");
+  // The retired open chat; Architect diagnoses (version 2) use the step routes.
+  if (d.version === 2) return jsonError(409, "This diagnostic uses the new format.");
   if (historyOf(d).length > 0) return Response.json(toView(d)); // already started
 
   let result;

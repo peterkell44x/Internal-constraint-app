@@ -4,14 +4,31 @@ import AppNav from "@/components/AppNav";
 import Header from "@/components/Header";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { DOMAINS, isDomainKey } from "@/lib/diagnostic/domains";
+import { isDomainKey } from "@/lib/diagnostic/domains";
+import { ANSWER_STEPS, parseFlow, TOTAL_STEPS } from "@/lib/diagnostic/v2/flow";
+import { DOMAIN_LABELS } from "@/lib/diagnostic/v2/prompts";
+import type { ArchitectReport } from "@/lib/diagnostic/v2/schema";
 
 export const metadata = { title: "My reports · Internal Constraint" };
 
 const dateFmt = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
 
 function domainLabel(domain: string) {
-  return isDomainKey(domain) ? DOMAINS[domain].label : domain;
+  return isDomainKey(domain) ? DOMAIN_LABELS[domain] : domain;
+}
+
+/** One line for a completed report: the old constraint, or the first sentence of the hidden block card. */
+function summary(d: { version: number; constraint: string | null; reportJson: unknown }): string | null {
+  if (d.version !== 2) return d.constraint;
+  const card = (d.reportJson as ArchitectReport | null)?.sections?.[1]?.cards?.[1] ?? "";
+  return card.split(/(?<=[.!?])\s+/)[0] || null;
+}
+
+function progressLine(d: { version: number; userTurns: number; flow: unknown }): string {
+  if (d.version !== 2) return d.userTurns + " answer" + (d.userTurns === 1 ? "" : "s") + " so far. Pick up where you left off.";
+  const f = parseFlow(d.flow);
+  const done = f.answers.length + f.taps.length;
+  return "Step " + Math.min(TOTAL_STEPS, done + 1) + " of " + TOTAL_STEPS + (f.answers.length < ANSWER_STEPS ? "" : ", almost there") + ". Pick up where you left off.";
 }
 
 export default async function DashboardPage() {
@@ -19,7 +36,10 @@ export default async function DashboardPage() {
   const diagnostics = await db.diagnostic.findMany({
     where: { userId: user.id },
     orderBy: { createdAt: "desc" },
-    select: { id: true, domain: true, status: true, constraint: true, userTurns: true, createdAt: true, completedAt: true },
+    select: {
+      id: true, domain: true, status: true, constraint: true, userTurns: true, createdAt: true, completedAt: true,
+      version: true, flow: true, reportJson: true,
+    },
   });
   const completed = diagnostics.filter((d) => d.status === "completed");
   const unfinished = diagnostics.filter((d) => d.status !== "completed");
@@ -49,7 +69,7 @@ export default async function DashboardPage() {
                       ? "Building your profile report."
                       : d.status === "ready"
                       ? "Ready to generate your profile report."
-                      : d.userTurns + " answer" + (d.userTurns === 1 ? "" : "s") + " so far. Pick up where you left off."}
+                      : progressLine(d)}
                   </p>
                 </Link>
               </li>
@@ -72,7 +92,7 @@ export default async function DashboardPage() {
                   <span>{domainLabel(d.domain)}</span>
                   <span className="muted">{dateFmt.format(d.completedAt ?? d.createdAt)}</span>
                 </div>
-                {d.constraint && <p>{d.constraint}</p>}
+                {summary(d) && <p>{summary(d)}</p>}
               </Link>
             </li>
           ))}

@@ -12,6 +12,8 @@ export async function POST(req: Request, ctx: RouteContext<"/api/diagnostics/[id
   if (user instanceof Response) return user;
   const d = await findOwnedDiagnostic((await ctx.params).id, user.id);
   if (!d) return jsonError(404, "Not found.");
+  // The retired open chat; Architect diagnoses (version 2) use the step routes.
+  if (d.version === 2) return jsonError(409, "This diagnostic uses the new format.");
 
   const body = await req.json().catch(() => null);
   const text = typeof body?.text === "string" ? body.text.trim() : "";

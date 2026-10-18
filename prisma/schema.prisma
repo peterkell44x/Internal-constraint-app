@@ -53,6 +53,14 @@ model Diagnostic {
   counterBelief String?
   completedAt   DateTime?
 
+  // Architect diagnosis (version 2): 8 fixed questions, 2 taps, a reaction
+  // after each, then a 12 card report. Version 1 rows are the retired open
+  // chat and its report, still shown with the old renderer.
+  version    Int      @default(1)
+  flow       Json? // {answers, taps, reactions, halfwaySeen}, saved after every step
+  crisis     Boolean  @default(false) // a reaction came back with the crisis flag
+  reportJson Json? // the checked report: {hidden_tie, sections, old_bullets, new_bullets}
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
