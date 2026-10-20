@@ -4,7 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 import type { DomainKey } from "../domains";
 import { checkArchitectReport, type CheckDebug } from "./checks";
-import { isSensitive, TAP_REACTION_STEP, type Flow, type Reaction } from "./flow";
+import { boldnessFor, isSensitive, TAP_REACTION_STEP, type Flow, type Reaction } from "./flow";
 import { answersText, buildCardInput, buildFactCheckInput, buildReactionInput, buildReportInput } from "./inputs";
 import {
   buildReportSystem,
@@ -12,8 +12,10 @@ import {
   FACT_CHECK_SYSTEM,
   REACTION_SYSTEM,
   SECTION_NAMES,
+  THIN_ANSWER_WORDS,
   UI_TEXT,
 } from "./prompts";
+import { cleanReaction } from "./reaction";
 import {
   type ArchitectReport,
   CARD_SCHEMA,
@@ -23,11 +25,9 @@ import {
   parseReaction,
   parseReport,
   REACTION_SCHEMA,
-  reactionProblems,
   REPORT_SCHEMA,
-  salvageReaction,
 } from "./schema";
-import { repeatedWords } from "./text";
+import { anchorInAnswers, countWords, hasDash } from "./text";
 
 // The same model the app has always used, overridable with ANTHROPIC_MODEL.
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
@@ -57,12 +57,17 @@ function message(e: unknown): string {
 
 /**
  * The reaction to one answer (steps 1 to 8) or to the first tap (step 9).
- * Retried once if the call fails or the reply can't be used; after that the
- * neutral fallback line is used, so the chat is never blocked.
+ * Retried once if the call fails, the reply can't be used, its anchor isn't
+ * in their answers, or it has a dash. After that the code clean-up fixes what
+ * it can, and if nothing usable is left, the neutral line is shown, so the
+ * chat is never blocked.
  */
 export async function generateReaction(domain: DomainKey, f: Flow, step: number): Promise<Reaction> {
-  const repeated = step === TAP_REACTION_STEP ? [] : repeatedWords(f.answers[step - 1] ?? "");
-  const input = buildReactionInput(domain, f, step, repeated);
+  const tap = step === TAP_REACTION_STEP;
+  const thin = !tap && countWords(f.answers[step - 1] ?? "") < THIN_ANSWER_WORDS;
+  const boldness = boldnessFor(step);
+  const input = buildReactionInput(domain, f, step, boldness, thin);
+  const answers = (tap ? f.answers : f.answers.slice(0, step)).join("\n");
   const problems: string[] = [];
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
@@ -71,22 +76,24 @@ export async function generateReaction(domain: DomainKey, f: Flow, step: number)
         problems.push("attempt " + attempt + ": reply was not valid");
         continue;
       }
-      const issues = reactionProblems(parsed.reaction, repeated);
-      if (issues.length && attempt === 1) {
-        problems.push("attempt 1: " + issues.join("; "));
+      const anchorOk = anchorInAnswers(parsed.anchor, answers);
+      const dash = hasDash(parsed.reaction);
+      if (attempt === 1 && (!anchorOk || dash)) {
+        problems.push("attempt 1: " + [!anchorOk && "anchor not found in their answers", dash && "em dash"].filter(Boolean).join(", "));
         continue;
       }
-      // On the second attempt a usable but imperfect reaction is trimmed rather than dropped.
-      const text = issues.length ? salvageReaction(parsed.reaction, repeated) : parsed.reaction;
-      if (issues.length) problems.push("attempt 2: " + issues.join("; ") + " (trimmed)");
-      if (!text) break;
-      return { step, text, crisis: parsed.crisis, repeatedWords: repeated, attempts: attempt, problems };
+      const { text, fired } = cleanReaction(parsed.reaction);
+      if (!text) {
+        problems.push("attempt " + attempt + ": nothing left after the code checks");
+        continue;
+      }
+      return { step, text, crisis: parsed.crisis, anchor: parsed.anchor, anchorOk, thin, boldness, fired, attempts: attempt, problems };
     } catch (e) {
       problems.push("attempt " + attempt + ": " + message(e));
     }
   }
   console.error("Reaction " + step + " failed; using the fallback line", problems);
-  return { step, text: UI_TEXT.reactionFallback, crisis: false, fallback: true, repeatedWords: repeated, attempts: 2, problems };
+  return { step, text: UI_TEXT.reactionFallback, crisis: false, fallback: true, thin, boldness, attempts: 2, problems };
 }
 
 /** What the report checks saw and did, stored with the report for the debug view. */
@@ -151,7 +158,7 @@ export async function generateArchitectReport(
     original,
     checks: {
       version: 2,
-      hiddenTie: original.hidden_tie,
+      hiddenTie: report.hidden_tie,
       sensitive,
       reportAttempts: attempts,
       reportProblems: problems,

@@ -20,7 +20,10 @@ interface Props {
   initial: DiagnosticView;
   subtitle: string;
   questions: string[];
+  /** The grey hint under each question; shown only, never sent to the AI. */
+  hints: string[];
   tapQuestions: string[];
+  sectionNames: string[];
   text: typeof UI_TEXT;
 }
 
@@ -41,7 +44,7 @@ async function post(url: string, body?: unknown): Promise<DiagnosticView> {
  * Everything is saved on the server after each step, so a reload picks up at
  * the same step.
  */
-export default function ArchitectSession({ initial, subtitle, questions, tapQuestions, text }: Props) {
+export default function ArchitectSession({ initial, subtitle, questions, hints, tapQuestions, sectionNames, text }: Props) {
   const router = useRouter();
   const [view, setView] = useState(initial);
   const [input, setInput] = useState("");
@@ -145,12 +148,12 @@ export default function ArchitectSession({ initial, subtitle, questions, tapQues
     return (
       <>
         <Header title="Internal constraint diagnostic" subtitle={subtitle} />
-        <ArchitectReport report={view.architectReport} crisis={view.crisis} text={text} />
+        <ArchitectReport report={view.architectReport} sectionNames={sectionNames} crisis={view.crisis} text={text} />
       </>
     );
   }
 
-  const bubbles = transcript(flow, questions, tapQuestions);
+  const bubbles = transcript(flow, questions, tapQuestions, hints);
   const elapsedMs = view.reportStartedAt ? Math.max(0, now - Date.parse(view.reportStartedAt)) : 0;
   const elapsed = Math.floor(elapsedMs / 60000) + ":" + String(Math.floor(elapsedMs / 1000) % 60).padStart(2, "0");
   const stepNumber = Math.min(TOTAL_STEPS, flow.answers.length + flow.taps.length + (screen.kind === "done" ? 0 : 1));
@@ -174,6 +177,7 @@ export default function ArchitectSession({ initial, subtitle, questions, tapQues
           ) : (
             <div key={i} className={"bubble assistant" + (b.kind === "question" ? " question" : "")}>
               {b.text}
+              {b.kind === "question" && b.hint && <p className="question-hint">{b.hint}</p>}
               {b.kind === "reaction" && b.crisis && <p className="support-line">{text.supportLine}</p>}
             </div>
           ),

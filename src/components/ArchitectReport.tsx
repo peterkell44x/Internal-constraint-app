@@ -8,6 +8,8 @@ import type { ArchitectReport as Report } from "@/lib/diagnostic/v2/schema";
 
 interface Props {
   report: Omit<Report, "hidden_tie">;
+  /** The section labels from the config. They replace the stored names, so earlier reports show the current labels. */
+  sectionNames: string[];
   /** A reaction came back with the crisis flag: the support line shows on the first card. */
   crisis: boolean;
   text: typeof UI_TEXT;
@@ -50,9 +52,9 @@ function CardTrack({ cards, supportLine }: { cards: string[]; supportLine: strin
  * The Architect report: four sections of three swipeable cards, a Continue
  * button between sections, then the old pattern next to the new one.
  */
-export default function ArchitectReport({ report, crisis, text }: Props) {
+export default function ArchitectReport({ report, sectionNames, crisis, text }: Props) {
   const [section, setSection] = useState(0);
-  const sections = report.sections.map((s) => ({ ...s, cards: s.cards.filter((c) => c.trim()) }));
+  const sections = report.sections.map((s, i) => ({ name: sectionNames[i] ?? s.name, cards: s.cards.filter((c) => c.trim()) }));
   const finalScreen = section >= sections.length;
 
   return (

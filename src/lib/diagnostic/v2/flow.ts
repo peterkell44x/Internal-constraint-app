@@ -12,9 +12,11 @@ export const MAX_ANSWER_CHARS = 3000;
 /** The reaction after the first tap has this step number. */
 export const TAP_REACTION_STEP = 9;
 
-export interface RepeatedWord {
-  word: string;
-  count: number;
+/** How bold a reaction may be: gentle for answers 1 to 3, medium for 4 and 5, direct for 6 to 8 and the tap. */
+export type Boldness = "gentle" | "medium" | "direct";
+
+export function boldnessFor(step: number): Boldness {
+  return step <= 3 ? "gentle" : step <= 5 ? "medium" : "direct";
 }
 
 export interface Reaction {
@@ -24,8 +26,14 @@ export interface Reaction {
   crisis: boolean;
   /** True when the AI call failed twice and the neutral line was shown instead. */
   fallback?: boolean;
-  /** Debug: the REPEATED_WORDS list passed to the AI. */
-  repeatedWords?: RepeatedWord[];
+  /** Debug: the exact words from their answers the reaction is built on, and whether the code found them. */
+  anchor?: string;
+  anchorOk?: boolean;
+  /** Debug: the answer was under the THIN_ANSWER length, and the boldness asked for. */
+  thin?: boolean;
+  boldness?: Boldness;
+  /** Debug: code checks that fired (em dash, word echo, "chasing", trim). */
+  fired?: string[];
   /** Debug: how many AI attempts it took, and why earlier ones were refused. */
   attempts?: number;
   problems?: string[];
@@ -127,7 +135,7 @@ export function isSensitive(f: Flow): boolean {
 }
 
 export type Bubble =
-  | { kind: "question"; text: string }
+  | { kind: "question"; text: string; hint?: string }
   | { kind: "answer"; text: string }
   | { kind: "reaction"; text: string; crisis: boolean }
   | { kind: "halfway" };
@@ -137,7 +145,7 @@ export type Bubble =
  * reaction that leads into the next question. The current question (or tap)
  * is last when one is waiting.
  */
-export function transcript(f: Flow, questions: string[], tapQuestions: string[]): Bubble[] {
+export function transcript(f: Flow, questions: string[], tapQuestions: string[], hints: string[] = []): Bubble[] {
   const out: Bubble[] = [];
   const react = (step: number) => {
     const r = reactionFor(f, step);
@@ -147,10 +155,10 @@ export function transcript(f: Flow, questions: string[], tapQuestions: string[])
   for (let i = 0; i < ANSWER_STEPS; i++) {
     const step = i + 1;
     if (i >= f.answers.length) {
-      if (screen.kind === "question" && screen.step === step) out.push({ kind: "question", text: questions[i] });
+      if (screen.kind === "question" && screen.step === step) out.push({ kind: "question", text: questions[i], hint: hints[i] });
       return out;
     }
-    out.push({ kind: "question", text: questions[i] }, { kind: "answer", text: f.answers[i] });
+    out.push({ kind: "question", text: questions[i], hint: hints[i] }, { kind: "answer", text: f.answers[i] });
     react(step);
     if (step === HALFWAY_AFTER && f.halfwaySeen) out.push({ kind: "halfway" });
     if (step === HALFWAY_AFTER && !f.halfwaySeen) return out;

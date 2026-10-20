@@ -12,10 +12,23 @@ This first phase has:
 
 New diagnoses use a fixed 10-step flow (code in `src/lib/diagnostic/v2/`, stored as `version = 2`):
 
-- **Questions:** 8 fixed questions per domain, then 2 Yes / No taps, with a progress bar. After each answer, and after the first tap, the AI writes a short reaction. A halfway screen comes after the reaction to answer 5.
+- **Questions:** 8 fixed questions per domain, then 2 Yes / No taps, with a progress bar. Each question has a grey hint line, which is shown only and never sent to the AI. A halfway screen comes after the reaction to answer 5.
+- **Reactions:** after each answer, and after the first tap, the AI writes a short reaction.
+  - Boldness ramps from gentle (answers 1 to 3) to medium (4 and 5) to direct (6 to 8 and the tap). A thin answer (under 25 words) gets a mild one.
+  - Each reaction returns an anchor: words copied from the answers. The code checks the anchor is really there and retries once if not.
+  - The code deletes sentences that comment on the person's words ("the word X shows up 4 times") or use "chase", replaces dashes, and cuts at a sentence end past 70 words.
 - **Saving and resume:** every step is saved, and a reload continues at the same step.
-- **Report:** after the last tap, one AI call writes a 12-card report (4 sections of 3 cards) plus Old pattern / New pattern bullets.
-- **Checks:** every number and quoted phrase must come from the answers. There is no banned wording, no repeated sentence, and no shared 8-word phrase between cards. A failing card is rewritten once, then the failing sentences are deleted, and a card under 40 words is rewritten once. Then one AI fact check runs (retried once); the sentences it flags are deleted.
+- **Report:** after the last tap, one AI call writes a 12-card report: Where it started, Uncovered internal constraint, Life by default and Life by design, 3 cards each. Then the Life by default / Life by design bullets. The report gives no action or advice. The two fixed closing lines ("That is your default, and it has been running for a long time." and "That is your design.") are placed once by the code.
+- **Checks:** every number and quoted phrase must come from the answers (a difference between two ages or years they gave is allowed). There is also:
+  - no banned wording (including "chase")
+  - no advice wording
+  - no em or en dashes
+  - no repeated sentence
+  - no shared 8-word phrase between cards
+  - no 5-word phrase twice inside one card
+
+  A failing card is rewritten once; a number fix may only remove the number. Then the failing sentences are deleted, and dashes become commas. A card under 40 words is rewritten once.
+- **AI fact check:** one call (retried once) flags sentences to delete, or to edit by removing words only. The code refuses an edit that adds or changes words.
 - **Prompts:** every AI instruction and all question text is in one file, `src/lib/diagnostic/v2/prompts.ts`, to be tuned after real runs.
 - **Crisis:** a reaction with `crisis: true` shows a 988 support line and makes the report SENSITIVE.
 - **Debug view:** for `REPORT_DEBUG_EMAILS`, it shows the hidden tie, the repeated words passed to each reaction, retries, rewritten cards, deleted sentences and whether the AI check succeeded.

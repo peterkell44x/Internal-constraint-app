@@ -83,7 +83,7 @@ async function runArchitectJob(id: string, domain: DomainKey, flow: unknown, sta
       where: mine,
       data: {
         status: "completed",
-        reportJson: { ...report, hidden_tie: original.hidden_tie } as unknown as Prisma.InputJsonValue,
+        reportJson: report as unknown as Prisma.InputJsonValue,
         reportDraft: JSON.stringify(original),
         reportChecks: checks as unknown as Prisma.InputJsonValue,
         completedAt: new Date(),

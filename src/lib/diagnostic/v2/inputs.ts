@@ -4,10 +4,11 @@
 // Pure module.
 
 import type { DomainKey } from "../domains.ts";
-import type { Flow, RepeatedWord } from "./flow.ts";
+import type { Boldness, Flow } from "./flow.ts";
 import { ANSWER_STEPS, HALFWAY_AFTER, TAP_REACTION_STEP } from "./flow.ts";
-import { CARD_ROLES, DOMAIN_LABELS, QUESTION_JOBS, QUESTIONS, REACTION_SPECIAL, TAP_QUESTIONS } from "./prompts.ts";
+import { CARD_ROLES, DOMAIN_LABELS, QUESTION_JOBS, QUESTIONS, REACTION_SPECIAL, TAP_QUESTIONS, THIN_ANSWER_WORDS } from "./prompts.ts";
 import type { ArchitectReport } from "./schema.ts";
+import { countWords } from "./text.ts";
 
 /** All the person's answers as plain text, for the code checks. */
 export function answersText(f: Flow): string {
@@ -25,7 +26,7 @@ function qa(domain: DomainKey, answers: string[], upTo: number): string {
  * The input for one reaction. Steps 1 to 8 react to that answer; step 9
  * reacts to the first tap by naming the pattern across all answers.
  */
-export function buildReactionInput(domain: DomainKey, f: Flow, step: number, repeated: RepeatedWord[]): string {
+export function buildReactionInput(domain: DomainKey, f: Flow, step: number, boldness: Boldness, thin: boolean): string {
   const lines = ["DOMAIN: " + DOMAIN_LABELS[domain]];
   if (step === TAP_REACTION_STEP) {
     lines.push(
@@ -33,7 +34,8 @@ export function buildReactionInput(domain: DomainKey, f: Flow, step: number, rep
       "WHAT THIS QUESTION IS FOR: " + REACTION_SPECIAL.afterTap9,
       "ALL ANSWERS:\n" + qa(domain, f.answers, ANSWER_STEPS),
       "LATEST ANSWER (a tap): " + (f.taps[0] ? "Yes" : "No"),
-      "REPEATED_WORDS: (none)",
+      "BOLDNESS: " + boldness,
+      "THIN_ANSWER: false",
     );
     return lines.join("\n\n");
   }
@@ -43,19 +45,30 @@ export function buildReactionInput(domain: DomainKey, f: Flow, step: number, rep
     "WHAT THIS QUESTION IS FOR: " + QUESTION_JOBS[i],
     "EARLIER ANSWERS:\n" + (i === 0 ? "(none)" : qa(domain, f.answers, i)),
     "LATEST ANSWER: " + f.answers[i],
-    "REPEATED_WORDS: " + (repeated.length ? repeated.map((r) => r.word + " (" + r.count + " times)").join(", ") : "(none)"),
+    "BOLDNESS: " + boldness,
+    "THIN_ANSWER: " + (thin ? "true" : "false"),
   );
   if (step === HALFWAY_AFTER) lines.push("SPECIAL: " + REACTION_SPECIAL.afterAnswer5);
   if (step === ANSWER_STEPS) lines.push("SPECIAL: " + REACTION_SPECIAL.afterAnswer8);
   return lines.join("\n\n");
 }
 
-/** The input for the report: the domain, all 8 answers, the taps, and SENSITIVE. */
+/** The answers under the THIN_ANSWER length, as "Q3, Q6", or "(none)". */
+export function thinAnswers(f: Flow): string {
+  const thin = f.answers.map((a, i) => (countWords(a) < THIN_ANSWER_WORDS ? "Q" + (i + 1) : "")).filter(Boolean);
+  return thin.length ? thin.join(", ") : "(none)";
+}
+
+/**
+ * The input for the report: the domain, all 8 answers, which answers are
+ * thin, and SENSITIVE. The Yes / No taps are left out: they are not facts
+ * about the person, and the report must not mention them.
+ */
 export function buildReportInput(domain: DomainKey, f: Flow, sensitive: boolean): string {
   return [
     "DOMAIN: " + DOMAIN_LABELS[domain],
     "ANSWERS:\n" + qa(domain, f.answers, ANSWER_STEPS),
-    "TAPS:\n" + TAP_QUESTIONS.map((q, i) => q + " " + (f.taps[i] === undefined ? "(no answer)" : f.taps[i] ? "Yes" : "No")).join("\n"),
+    "THIN ANSWERS: " + thinAnswers(f),
     "SENSITIVE: " + (sensitive ? "true" : "false"),
   ].join("\n\n");
 }
@@ -78,6 +91,7 @@ export function buildCardInput(
   return [
     "DOMAIN: " + DOMAIN_LABELS[domain],
     "ANSWERS:\n" + qa(domain, f.answers, ANSWER_STEPS),
+    "THIN ANSWERS: " + thinAnswers(f),
     "SENSITIVE: " + (sensitive ? "true" : "false"),
     "HIDDEN TIE: " + report.hidden_tie,
     "THIS CARD: " + report.sections[section].name + ", card " + (card + 1) + ". It is for: " + CARD_ROLES[section][card],

@@ -310,3 +310,4 @@ details.transcript-details summary { cursor: pointer; font-size: 13px; color: va
 .pattern-col.new { background: var(--accent-bg); color: var(--accent-text); }
 .pattern-col h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 8px; }
 .pattern-col ul { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.5; }
+.question-hint { font-size: 12px; font-weight: 400; color: var(--text-secondary); margin: 6px 0 0; }

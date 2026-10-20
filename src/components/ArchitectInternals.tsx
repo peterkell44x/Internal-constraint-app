@@ -28,10 +28,13 @@ export default function ArchitectInternals({ flow, checks, original }: Props) {
               <strong>{r.step === 9 ? "After the first tap" : "Answer " + r.step}</strong>
               {r.fallback && <span className="pill">AI failed twice, fallback line shown</span>}
               {r.crisis && <span className="pill">crisis</span>}
+              {r.thin && <span className="pill">THIN_ANSWER</span>}
               <div className="muted small">
-                REPEATED_WORDS: {r.repeatedWords?.length ? r.repeatedWords.map((w) => w.word + " (" + w.count + ")").join(", ") : "(none)"}
+                Anchor: {r.anchor ? <>&ldquo;{r.anchor}&rdquo; {r.anchorOk ? "(found in their answers)" : "(NOT found in their answers)"}</> : "(none)"}
+                {" · "}boldness: {r.boldness ?? "n/a"}
                 {" · "}attempts: {r.attempts ?? 1}
               </div>
+              {(r.fired ?? []).length > 0 && <div className="muted small">Checks that fired: {r.fired!.join(", ")}</div>}
               {(r.problems ?? []).length > 0 && <div className="muted small">Retries: {r.problems!.join("; ")}</div>}
             </li>
           ))}
@@ -55,6 +58,15 @@ export default function ArchitectInternals({ flow, checks, original }: Props) {
             <p className="small">Succeeded ({c.aiCheck.attempts} attempt{c.aiCheck.attempts === 1 ? "" : "s"}), {c.aiCheck.flagged} sentence(s) flagged.</p>
           ) : (
             <p className="small"><strong>AI check failed</strong> after {c.aiCheck?.attempts ?? 0} attempts ({c.aiCheck?.error ?? "no reply"}). The report shipped with the code checks only.</p>
+          )}
+
+          <h3>Code checks that fired</h3>
+          {(c.fired ?? []).length === 0 ? (
+            <p className="muted small">None.</p>
+          ) : (
+            <ul className="internals-list">
+              {c.fired!.map((f, i) => <li key={i}>{f}</li>)}
+            </ul>
           )}
 
           <h3>Cards rewritten</h3>
@@ -83,6 +95,21 @@ export default function ArchitectInternals({ flow, checks, original }: Props) {
                 </li>
               ))}
             </ul>
+          )}
+
+          {(c.edited ?? []).length > 0 && (
+            <>
+              <h3>Sentences edited by the AI check (words removed only)</h3>
+              <ul className="internals-list">
+                {c.edited!.map((e, i) => (
+                  <li key={i}>
+                    {e.card}: &ldquo;{e.before}&rdquo;
+                    <div className="small">&rarr; &ldquo;{e.after}&rdquo;</div>
+                    <div className="muted small">{e.reason}</div>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
 
           {(c.shortCards ?? []).length > 0 && (

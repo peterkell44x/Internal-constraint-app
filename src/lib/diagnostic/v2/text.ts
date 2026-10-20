@@ -1,38 +1,8 @@
-// Deterministic text helpers for the Architect diagnosis: the repeated words
-// passed to a reaction, sentence splitting, and the code checks on the report
-// (numbers and quotes must come from the answers, banned wording, repeats).
+// Deterministic text helpers for the Architect diagnosis: sentence splitting,
+// and the code checks on reactions and the report (numbers and quotes must
+// come from the answers, banned wording, dashes, repeats, anchors, edits).
 //
 // Pure module: no prompts, no database.
-
-import type { RepeatedWord } from "./flow.ts";
-
-const STOP_WORDS = new Set(
-  ("about above after again against all also always and another any anyone anything around because been before being " +
-    "below between both but could didnt does doesnt doing dont down during each even every everyone everything from " +
-    "further have having here hers herself himself into itself just like little might more most much myself never " +
-    "other others ourselves over really same should since some something still such than that thats their theirs " +
-    "them themselves then there theres these they theyre thing things think this those though through under until " +
-    "very want wanted were what whatever when where whether which while whom whose with would youre yours yourself " +
-    "yourselves maybe gonna kinda sorta pretty")
-    .split(" "),
-);
-
-/**
- * Words of 5 letters or more, other than common stop words, that appear 3 or
- * more times in a text. At most 2, most frequent first.
- */
-export function repeatedWords(text: string): RepeatedWord[] {
-  const counts = new Map<string, number>();
-  for (const w of text.toLowerCase().replace(/[’']/g, "").replace(/[^a-z0-9]+/g, " ").split(" ")) {
-    if (w.length < 5 || STOP_WORDS.has(w) || /^\d+$/.test(w)) continue;
-    counts.set(w, (counts.get(w) ?? 0) + 1);
-  }
-  return [...counts]
-    .filter(([, n]) => n >= 3)
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, 2)
-    .map(([word, count]) => ({ word, count }));
-}
 
 export function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
@@ -148,6 +118,11 @@ export function findQuotes(text: string): string[] {
  */
 export function unsupportedItems(text: string, answers: string): string[] {
   const said = new Set(findNumbers(answers).map((n) => n.value));
+  // A simple difference between two ages (10 to 100) or two years (1900 to
+  // 2100) the person gave is allowed: "since 18" and "I'm 22" make "four years".
+  const ages = [...said].filter((n) => Number.isInteger(n) && n >= 10 && n <= 100);
+  const years = [...said].filter((n) => Number.isInteger(n) && n >= 1900 && n <= 2100);
+  for (const group of [ages, years]) for (const a of group) for (const b of group) if (a > b) said.add(a - b);
   const out: string[] = [];
   for (const n of findNumbers(text, { strictSmall: true })) {
     if (said.has(n.value)) continue;
@@ -194,6 +169,95 @@ export function repeatedSentences(cards: string[], index: number): string[] {
     if (!n) continue;
     if (earlierSentences.has(n) || [...grams(s)].some((g) => earlierGrams.has(g))) out.push(s);
     earlierSentences.add(n);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Dashes, phrases, length, anchors, edits
+
+/** True when a text has an em dash or en dash. */
+export function hasDash(text: string): boolean {
+  return /[—–]/.test(text);
+}
+
+/** Replaces every em dash and en dash with ", ". */
+export function replaceDashes(text: string): string {
+  return text
+    .replace(/\s*[—–]\s*/g, ", ")
+    .replace(/,\s*,/g, ",")
+    .replace(/,\s*([.!?])/g, "$1")
+    .replace(/^,\s*/, "");
+}
+
+/** The sentences of a text that match any of the patterns. */
+export function sentencesMatching(text: string, patterns: RegExp[]): string[] {
+  return sentencesOf(text).filter((s) => patterns.some((p) => p.test(s)));
+}
+
+/**
+ * Cuts a text to at most `max` words, only at the end of a full sentence.
+ * The first sentence is always kept whole, even if it alone is longer.
+ */
+export function trimAtSentence(text: string, max: number): string {
+  if (countWords(text) <= max) return text.trim();
+  const kept: string[] = [];
+  for (const s of sentencesOf(text)) {
+    if (kept.length > 0 && countWords([...kept, s].join(" ")) > max) break;
+    kept.push(s);
+  }
+  return kept.join(" ");
+}
+
+/** True when the anchor (copied words) really appears in the answers, ignoring case and punctuation. */
+export function anchorInAnswers(anchor: string, answers: string): boolean {
+  const a = normalize(anchor);
+  return a.length > 0 && (" " + normalize(answers) + " ").includes(" " + a + " ");
+}
+
+/**
+ * True when `edited` is `original` with some words removed and nothing
+ * added, reworded or reordered (comparing words, ignoring case and
+ * punctuation). An empty edit is not an edit.
+ */
+export function isWordsRemovedOnly(original: string, edited: string): boolean {
+  const o = normalize(original).split(" ").filter(Boolean);
+  const e = normalize(edited).split(" ").filter(Boolean);
+  if (e.length === 0 || e.length >= o.length) return false;
+  let i = 0;
+  for (const w of e) {
+    while (i < o.length && o[i] !== w) i++;
+    if (i === o.length) return false;
+    i++;
+  }
+  return true;
+}
+
+const WITHIN_WORDS = 5;
+
+/**
+ * Sentences of one card that repeat a phrase of 5 or more words already used
+ * in the same card (earlier, or earlier in the same sentence). The `keep`
+ * sentence (a fixed closing line) is read first, so the other copy is the one
+ * flagged.
+ */
+export function repeatedWithinCard(card: string, keep?: string): string[] {
+  const all = sentencesOf(card);
+  const keepNorm = keep ? normalize(keep) : null;
+  const ordered = keepNorm ? [...all.filter((s) => normalize(s) === keepNorm), ...all.filter((s) => normalize(s) !== keepNorm)] : all;
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const s of ordered) {
+    const w = normalize(s).split(" ").filter(Boolean);
+    let repeated = false;
+    const mine = new Set<string>();
+    for (let i = 0; i + WITHIN_WORDS <= w.length; i++) {
+      const g = w.slice(i, i + WITHIN_WORDS).join(" ");
+      if (seen.has(g) || mine.has(g)) repeated = true;
+      mine.add(g);
+    }
+    if (repeated && normalize(s) !== keepNorm) out.push(s);
+    for (const g of mine) seen.add(g);
   }
   return out;
 }

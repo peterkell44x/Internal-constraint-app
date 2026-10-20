@@ -1,20 +1,16 @@
 // JSON schemas for the Architect AI calls, and validators for what comes back.
 // The schemas go to the model as structured output; the validators check what
-// the schema can't (exact counts, empty strings, the reaction's word limit and
-// repeated-word call-out).
+// the schema can't (exact counts, empty strings, edit actions).
 //
 // Pure module.
-
-import type { RepeatedWord } from "./flow.ts";
-import { countWords, findNumbers } from "./text.ts";
 
 const str = { type: "string" };
 
 export const REACTION_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["reaction", "crisis"],
-  properties: { reaction: str, crisis: { type: "boolean" } },
+  required: ["reaction", "anchor", "crisis"],
+  properties: { reaction: str, anchor: str, crisis: { type: "boolean" } },
 } as const;
 
 export const REPORT_SCHEMA = {
@@ -54,8 +50,13 @@ export const FACT_CHECK_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["n", "reason"],
-        properties: { n: { type: "integer" }, reason: str },
+        required: ["n", "action", "edit", "reason"],
+        properties: {
+          n: { type: "integer" },
+          action: { type: "string", enum: ["delete", "edit"] },
+          edit: str,
+          reason: str,
+        },
       },
     },
   },
@@ -102,55 +103,38 @@ export function parseCard(text: string): string | null {
   return j && nonEmpty(j.card) ? j.card.trim() : null;
 }
 
-export function parseFactCheck(text: string): { n: number; reason: string }[] | null {
+export interface FactFlag {
+  n: number;
+  action: "delete" | "edit";
+  edit: string;
+  reason: string;
+}
+
+/** The reason as one clean line: the first line, cut before any "However". */
+export function cleanReason(reason: string): string {
+  const first = reason.split(/\n/)[0].trim();
+  const cut = first.search(/\bhowever\b/i);
+  return (cut > 0 ? first.slice(0, cut) : first).trim().replace(/[,;:\s]+$/, "");
+}
+
+export function parseFactCheck(text: string): FactFlag[] | null {
   const j = json(text) as { flagged?: unknown } | null;
   if (!j || !Array.isArray(j.flagged)) return null;
   return j.flagged
-    .filter((f): f is { n: number; reason: string } => !!f && Number.isInteger(f.n))
-    .map((f) => ({ n: f.n, reason: String(f.reason ?? "") }));
+    .filter((f): f is { n: number; action?: unknown; edit?: unknown; reason?: unknown } => !!f && Number.isInteger(f.n))
+    .map((f) => ({
+      n: f.n,
+      action: f.action === "edit" ? "edit" : "delete",
+      edit: typeof f.edit === "string" ? f.edit.trim() : "",
+      reason: cleanReason(String(f.reason ?? "")),
+    }));
 }
 
-export const REACTION_MAX_WORDS = 55;
+/** The reaction's hard length limit; it aims for about 55 words. */
+export const REACTION_MAX_WORDS = 70;
 
-export function parseReaction(text: string): { reaction: string; crisis: boolean } | null {
-  const j = json(text) as { reaction?: unknown; crisis?: unknown } | null;
+export function parseReaction(text: string): { reaction: string; anchor: string; crisis: boolean } | null {
+  const j = json(text) as { reaction?: unknown; anchor?: unknown; crisis?: unknown } | null;
   if (!j || !nonEmpty(j.reaction) || typeof j.crisis !== "boolean") return null;
-  return { reaction: j.reaction.trim(), crisis: j.crisis };
-}
-
-const CALL_OUT = /\b(shows? up|showed up|appears?|appeared|comes? up|came up|used|said|wrote|written)\b.*\btimes\b/i;
-
-/** The sentences of a reaction that call out a word's count. */
-function callOutSentences(text: string): string[] {
-  return text.split(/(?<=[.!?])\s+/).filter((s) => CALL_OUT.test(s) && findNumbers(s).length > 0);
-}
-
-/**
- * Why a reaction can't be used as written: over the word limit, or a
- * repeated-word call-out ("the word X shows up N times") that doesn't match
- * the REPEATED_WORDS list the code computed.
- */
-export function reactionProblems(text: string, repeated: RepeatedWord[]): string[] {
-  const problems: string[] = [];
-  const n = countWords(text);
-  if (n > REACTION_MAX_WORDS) problems.push("over " + REACTION_MAX_WORDS + " words (" + n + ")");
-  for (const s of callOutSentences(text)) {
-    const lower = s.toLowerCase();
-    const counts = findNumbers(s).map((x) => x.value);
-    const ok = repeated.some((r) => new RegExp("\\b" + r.word + "\\b").test(lower) && counts.includes(r.count));
-    if (!ok) problems.push("calls out a repeated word that the count does not support");
-  }
-  return problems;
-}
-
-/** A reaction made usable without another AI call: unsupported call-outs dropped, cut to the word limit. */
-export function salvageReaction(text: string, repeated: RepeatedWord[]): string {
-  const bad = new Set(callOutSentences(text).filter((s) => reactionProblems(s, repeated).length > 0));
-  const kept: string[] = [];
-  for (const s of text.split(/(?<=[.!?])\s+/)) {
-    if (bad.has(s)) continue;
-    if (countWords([...kept, s].join(" ")) > REACTION_MAX_WORDS) break;
-    kept.push(s);
-  }
-  return kept.join(" ").trim();
+  return { reaction: j.reaction.trim(), anchor: typeof j.anchor === "string" ? j.anchor.trim() : "", crisis: j.crisis };
 }
