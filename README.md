@@ -14,9 +14,15 @@ New diagnoses use a fixed 10-step flow (code in `src/lib/diagnostic/v2/`, stored
 
 - **Questions:** 8 fixed questions per domain, then 2 Yes / No taps, with a progress bar. Each question has a grey hint line, which is shown only and never sent to the AI. A halfway screen comes after the reaction to answer 5.
 - **Reactions:** after each answer, and after the first tap, the AI writes a short reaction.
-  - Boldness ramps from gentle (answers 1 to 3) to medium (4 and 5) to direct (6 to 8 and the tap). A thin answer (under 25 words) gets a mild one.
+  - Reactions mirror what the person said and add one light meaning that stays inside it, following a shape set for each question. They draw no cause and effect from the past unless the person made that link.
+  - Boldness is tone only: gentle (answers 1 to 3), medium (4 and 5), direct (6 to 8 and the tap). A thin answer (under 25 words) gets a mild reaction.
   - Each reaction returns an anchor: words copied from the answers. The code checks the anchor is really there and retries once if not.
-  - The code deletes sentences that comment on the person's words ("the word X shows up 4 times") or use "chase", replaces dashes, and cuts at a sentence end past 70 words.
+  - The code deletes sentences that:
+    - comment on the person's words ("the word X shows up 4 times")
+    - tell them what they "actually" want, or reach for a cause ("runs your")
+    - use "chase"
+
+    It also replaces dashes, and cuts at a sentence end past 70 words. The same banned phrases and word echoes are deleted from report cards.
 - **Saving and resume:** every step is saved, and a reload continues at the same step.
 - **Report:** after the last tap, one AI call writes a 12-card report: Where it started, Uncovered internal constraint, Life by default and Life by design, 3 cards each. Then the Life by default / Life by design bullets. The report gives no action or advice. The two fixed closing lines ("That is your default, and it has been running for a long time." and "That is your design.") are placed once by the code.
 - **Checks:** every number and quoted phrase must come from the answers (a difference between two ages or years they gave is allowed). There is also:
@@ -26,6 +32,7 @@ New diagnoses use a fixed 10-step flow (code in `src/lib/diagnostic/v2/`, stored
   - no repeated sentence
   - no shared 8-word phrase between cards
   - no 5-word phrase twice inside one card
+  - no duration or frequency ("for years", "always") the person did not use
 
   A failing card is rewritten once; a number fix may only remove the number. Then the failing sentences are deleted, and dashes become commas. A card under 40 words is rewritten once.
 - **AI fact check:** one call (retried once) flags sentences to delete, or to edit by removing words only. The code refuses an edit that adds or changes words.

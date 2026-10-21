@@ -261,3 +261,12 @@ export function repeatedWithinCard(card: string, keep?: string): string[] {
   }
   return out;
 }
+
+/**
+ * Duration or frequency phrases in a text ("for years", "always") that the
+ * person never used, comparing words and ignoring case and punctuation.
+ */
+export function durationsNotSaid(text: string, answers: string, phrases: string[]): string[] {
+  const said = " " + normalize(answers) + " ";
+  return bannedIn(text, phrases).filter((p) => !said.includes(" " + normalize(p) + " "));
+}

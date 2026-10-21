@@ -5,8 +5,8 @@
 
 import type { DomainKey } from "../domains.ts";
 import type { Boldness, Flow } from "./flow.ts";
-import { ANSWER_STEPS, HALFWAY_AFTER, TAP_REACTION_STEP } from "./flow.ts";
-import { CARD_ROLES, DOMAIN_LABELS, QUESTION_JOBS, QUESTIONS, REACTION_SPECIAL, TAP_QUESTIONS, THIN_ANSWER_WORDS } from "./prompts.ts";
+import { ANSWER_STEPS, TAP_REACTION_STEP } from "./flow.ts";
+import { CARD_ROLES, DOMAIN_LABELS, QUESTION_JOBS, QUESTIONS, REACTION_AFTER_TAP9, REACTION_SHAPES, TAP_QUESTIONS, THIN_ANSWER_WORDS } from "./prompts.ts";
 import type { ArchitectReport } from "./schema.ts";
 import { countWords } from "./text.ts";
 
@@ -31,7 +31,8 @@ export function buildReactionInput(domain: DomainKey, f: Flow, step: number, bol
   if (step === TAP_REACTION_STEP) {
     lines.push(
       "QUESTION: " + TAP_QUESTIONS[0],
-      "WHAT THIS QUESTION IS FOR: " + REACTION_SPECIAL.afterTap9,
+      "WHAT THIS QUESTION IS FOR: " + REACTION_AFTER_TAP9,
+      "HOW TO REACT TO THIS QUESTION: " + REACTION_AFTER_TAP9,
       "ALL ANSWERS:\n" + qa(domain, f.answers, ANSWER_STEPS),
       "LATEST ANSWER (a tap): " + (f.taps[0] ? "Yes" : "No"),
       "BOLDNESS: " + boldness,
@@ -43,13 +44,12 @@ export function buildReactionInput(domain: DomainKey, f: Flow, step: number, bol
   lines.push(
     "QUESTION: " + QUESTIONS[domain][i],
     "WHAT THIS QUESTION IS FOR: " + QUESTION_JOBS[i],
+    "HOW TO REACT TO THIS QUESTION: " + REACTION_SHAPES[i],
     "EARLIER ANSWERS:\n" + (i === 0 ? "(none)" : qa(domain, f.answers, i)),
     "LATEST ANSWER: " + f.answers[i],
     "BOLDNESS: " + boldness,
     "THIN_ANSWER: " + (thin ? "true" : "false"),
   );
-  if (step === HALFWAY_AFTER) lines.push("SPECIAL: " + REACTION_SPECIAL.afterAnswer5);
-  if (step === ANSWER_STEPS) lines.push("SPECIAL: " + REACTION_SPECIAL.afterAnswer8);
   return lines.join("\n\n");
 }
 
@@ -101,10 +101,10 @@ export function buildCardInput(
   ].join("\n\n");
 }
 
-/** The input for the one AI fact check: the answers and the numbered sentences. */
-export function buildFactCheckInput(domain: DomainKey, f: Flow, numbered: { n: number; text: string }[]): string {
+/** The input for the one AI fact check: the answers and the numbered sentences, each with its section. */
+export function buildFactCheckInput(domain: DomainKey, f: Flow, numbered: { n: number; text: string; section: string }[]): string {
   return [
     "ANSWERS:\n" + qa(domain, f.answers, ANSWER_STEPS),
-    "REPORT, NUMBERED SENTENCES:\n" + numbered.map((s) => "[" + s.n + "] " + s.text).join("\n"),
+    "REPORT, NUMBERED SENTENCES:\n" + numbered.map((s) => "[" + s.n + "] (" + s.section + ") " + s.text).join("\n"),
   ].join("\n\n");
 }

@@ -76,8 +76,8 @@ test("a hint shows under all 8 questions in all 4 domains, and is never sent to 
     const sent = [1, 2, 3, 4, 5, 6, 7, 8].map((s) => buildReactionInput(d, f, s, boldnessFor(s), false)).join("\n") + buildReportInput(d, f, false);
     for (const h of QUESTION_HINTS[d]) assert.ok(!sent.includes(h), "hint sent to the AI: " + h);
   }
-  assert.equal(QUESTION_HINTS.money[6], "Real numbers are best. A rough guess is fine.");
-  assert.equal(QUESTION_HINTS.fitness[6], "Say what it looks like and feels like. A rough picture is fine.");
+  assert.equal(QUESTION_HINTS.money[6], "Real numbers are best.");
+  assert.equal(QUESTION_HINTS.fitness[6], "Say what it looks like and feels like.");
   assert.equal(QUESTION_HINTS.happiness[0], "Think about the home, the people around you, and the mood.");
 });
 
@@ -287,9 +287,9 @@ test('"chasing" and other banned wording: the card is rewritten once, then the s
 
 test("em dashes: the card is rewritten once, then dashes are replaced with commas", async () => {
   const { d, calls } = deps();
-  const out = await checkArchitectReport(report({ 0: card(0) + " Money was tense — always." }), ANSWERS, d);
+  const out = await checkArchitectReport(report({ 0: card(0) + " Money was tense — at home." }), ANSWERS, d);
   assert.deepEqual(calls[0].fixes, [CARD_FIX.dash]);
-  assert.ok(out.report.sections[0].cards[0].endsWith("Money was tense, always."));
+  assert.ok(out.report.sections[0].cards[0].endsWith("Money was tense, at home."));
   assert.ok(out.debug.fired.some((f) => f.includes("em dash replaced")));
 });
 
@@ -422,4 +422,89 @@ test("a crisis reaction shows the support line and makes the report SENSITIVE", 
 
 test("sentencesOf keeps every sentence of a card", () => {
   assert.deepEqual(sentencesOf("One. Two? Three!"), ["One.", "Two?", "Three!"]);
+});
+
+// ---------------------------------------------------------------------------
+// Batch 4
+
+test("Q7 and Q8 hints in all four domains no longer say it's fine to give less", () => {
+  for (const d of DOMAIN_KEYS) {
+    assert.equal(QUESTION_HINTS[d][6], d === "money" ? "Real numbers are best." : "Say what it looks like and feels like.", d);
+    assert.equal(QUESTION_HINTS[d][7], "Think about how they talk, how they walk into a room, and how they handle a bad day.", d);
+    assert.ok(QUESTION_HINTS[d].every((h) => !/rough|a few words is fine/i.test(h)), d);
+  }
+});
+
+test("the reaction input carries how to react to that question", () => {
+  const f = answeredUpTo(7);
+  assert.match(buildReactionInput("relationships", f, 7, "direct", false), /HOW TO REACT TO THIS QUESTION: Mirror their goals in order/);
+  assert.match(buildReactionInput("relationships", answeredUpTo(8), 8, "direct", false), /HOW TO REACT TO THIS QUESTION: Mirror the traits/);
+});
+
+test("banned phrases are deleted from reactions", () => {
+  const r = cleanReaction("You want three girlfriends and a brother. What you actually want is to never feel alone. That tells me a lot.");
+  assert.equal(r.text, "You want three girlfriends and a brother.");
+  assert.ok(r.fired.some((f) => f.startsWith("banned phrase deleted")));
+  for (const p of ["the real goal is safety", "the realest goal is a brother", "It makes a certain kind of sense", "Now it runs your relationships", "and it runs you", "What you're really after is calm", "That tells you something about home"]) {
+    assert.equal(cleanReaction("You pull away. " + p + ".").text, "You pull away.", p);
+  }
+  // "you used to" is not a word echo.
+  assert.equal(cleanReaction("You used to text her every day.").text, "You used to text her every day.");
+});
+
+test("banned phrases and word echoes are deleted from report cards", async () => {
+  const { d, calls } = deps();
+  const out = await checkArchitectReport(
+    report({
+      4: card(4) + " What you actually want is to never feel dropped.",
+      6: card(6) + " You used that word yourself: on the outside it seemed good.",
+      7: card(7) + " The word happy shows up four times.",
+    }),
+    ANSWERS,
+    d,
+  );
+  assert.equal(calls.length, 0, "deleted straight away, no rewrite");
+  assert.equal(out.report.sections[1].cards[1], card(4));
+  assert.equal(out.report.sections[2].cards[0], card(6));
+  assert.equal(out.report.sections[2].cards[1], card(7));
+  assert.ok(out.debug.fired.some((f) => f.includes("banned phrase deleted")));
+  assert.ok(out.debug.fired.some((f) => f.includes("word echo deleted")));
+});
+
+test("invented durations: rewritten once, then deleted; wording the person used is allowed", async () => {
+  const answers = ANSWERS + " I always freeze when she looks at me.";
+  const { d, calls } = deps();
+  const out = await checkArchitectReport(
+    report({ 1: card(1) + " You spent years of pulling back from friends.", 2: card(2) + " You always freeze when she looks at you." }),
+    answers,
+    d,
+  );
+  assert.deepEqual(calls.map((c) => [c.section, c.card]), [[0, 1]], "only the card with an invented duration is rewritten");
+  assert.match(calls[0].fixes.join(" "), /Remove the duration or frequency.*years of/);
+  assert.equal(out.report.sections[0].cards[1], card(1));
+  assert.ok(out.report.sections[0].cards[2].endsWith("You always freeze when she looks at you."), "they said always");
+  assert.ok(out.debug.deleted.some((x) => x.reason.startsWith("invented duration")));
+});
+
+test("closing lines are removed from the wrong card, including reworded copies", () => {
+  const r = enforceClosings(
+    report({
+      5: card(5) + " " + DEFAULT_CLOSING,
+      3: card(3) + " That's your default, and it has run for a long time.",
+      0: card(0) + " That is your design, and it starts now.",
+    }),
+  );
+  assert.equal(r.sections[1].cards[2], card(5));
+  assert.equal(r.sections[1].cards[0], card(3));
+  assert.equal(r.sections[0].cards[0], card(0));
+  assert.ok(r.sections[2].cards[2].endsWith(DEFAULT_CLOSING));
+  assert.ok(r.sections[3].cards[2].endsWith(DESIGN_CLOSING));
+});
+
+test("the fact check sees which section each sentence is in", async () => {
+  let seen: { section: string }[] = [];
+  const { d } = deps({ factCheck: async (numbered) => { seen = numbered; return []; } });
+  await checkArchitectReport(report(), ANSWERS, d);
+  assert.ok(seen.some((x) => x.section === "Life by design"));
+  assert.ok(seen.some((x) => x.section === "Where it started"));
 });

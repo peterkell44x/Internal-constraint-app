@@ -3,12 +3,15 @@
 // Code checks (deterministic), per card: every number and quoted phrase must
 // come from the answers; no banned wording (including "chase"), no advice or
 // instruction wording, no em or en dashes, no sentence repeated from another
-// card, no 8-word phrase shared with another card, and no 5-word phrase used
-// twice inside the card. A card that fails is rewritten once; whatever still
-// fails is deleted sentence by sentence (dashes are replaced with commas
-// instead). A card left under 40 words is rewritten once from the answers.
-// The fixed closing lines of "Life by default" and "Life by design" are put
-// at the end of their cards exactly once.
+// card, no 8-word phrase shared with another card, no 5-word phrase used
+// twice inside the card, and no duration or frequency ("for years",
+// "always") the person never used. A card that fails is rewritten once;
+// whatever still fails is deleted sentence by sentence (dashes are replaced
+// with commas instead). A card left under 40 words is rewritten once from the
+// answers. Sentences that tell the person what they "really" want or comment
+// on their words ("you used that word") are deleted straight away. The fixed
+// closing lines of "Life by default" and "Life by design" are put at the end
+// of their own cards exactly once, and removed from every other card.
 //
 // AI check: one call (retried once if it fails) flags sentences, each to be
 // deleted or edited by removing words only; an edit that adds or changes
@@ -17,11 +20,22 @@
 //
 // The AI calls are passed in, so this module stays pure and testable.
 
-import { ACTION_PHRASES, BANNED_WORDING, BULLET_ACTION_PHRASES, CARD_FIX, DEFAULT_CLOSING, DESIGN_CLOSING } from "./prompts.ts";
+import {
+  ACTION_PHRASES,
+  BANNED_WORDING,
+  BULLET_ACTION_PHRASES,
+  CARD_FIX,
+  CODE_BANNED_PHRASES,
+  DEFAULT_CLOSING,
+  DESIGN_CLOSING,
+  DURATION_PHRASES,
+  REPORT_WORD_ECHO_PATTERNS,
+} from "./prompts.ts";
 import type { ArchitectReport, FactFlag } from "./schema.ts";
 import {
   bannedIn,
   countWords,
+  durationsNotSaid,
   hasDash,
   isWordsRemovedOnly,
   normalize,
@@ -40,7 +54,7 @@ export interface CheckDeps {
   /** Rewrites one card; null if the call fails. */
   regenerate(section: number, card: number, fixes: string[], report: ArchitectReport): Promise<string | null>;
   /** The AI fact check: flagged sentences. Throws if the call fails. */
-  factCheck(numbered: { n: number; text: string }[]): Promise<FactFlag[]>;
+  factCheck(numbered: { n: number; text: string; section: string }[]): Promise<FactFlag[]>;
 }
 
 export interface CheckDebug {
@@ -84,9 +98,9 @@ function withCard(r: ArchitectReport, ref: Ref, text: string): ArchitectReport {
 // ---------------------------------------------------------------------------
 // The fixed closing lines
 
-const CLOSINGS: { ref: Ref; text: string }[] = [
-  { ref: { s: 2, c: 2 }, text: DEFAULT_CLOSING },
-  { ref: { s: 3, c: 2 }, text: DESIGN_CLOSING },
+const CLOSINGS: { ref: Ref; text: string; marker: string }[] = [
+  { ref: { s: 2, c: 2 }, text: DEFAULT_CLOSING, marker: "that is your default" },
+  { ref: { s: 3, c: 2 }, text: DESIGN_CLOSING, marker: "that is your design" },
 ];
 
 function closingKey(sentence: string): string {
@@ -98,13 +112,16 @@ export function closingFor(ref: Ref): string | undefined {
   return CLOSINGS.find((x) => x.ref.s === ref.s && x.ref.c === ref.c)?.text;
 }
 
-/** Removes every copy of the two closing lines, then puts each once at the end of its own card. */
+/**
+ * Removes every copy of the two closing lines from every card, including
+ * reworded copies ("That's your default, and it has run a long time."), then
+ * puts each once, word for word, at the end of its own card.
+ */
 export function enforceClosings(r: ArchitectReport): ArchitectReport {
   let out = r;
   for (const closing of CLOSINGS) {
-    const key = closingKey(closing.text);
     for (const ref of refs()) {
-      const copies = sentencesOf(cardAt(out, ref)).filter((s) => closingKey(s) === key);
+      const copies = sentencesOf(cardAt(out, ref)).filter((s) => (" " + closingKey(s) + " ").includes(" " + closing.marker + " "));
       if (copies.length) out = withCard(out, ref, removeSentences(cardAt(out, ref), new Set(copies)));
     }
     const card = cardAt(out, closing.ref);
@@ -153,6 +170,11 @@ export function cardIssues(r: ArchitectReport, ref: Ref, answers: string): { kin
     kinds.push("repeats itself");
     fixes.push(CARD_FIX.repeatedWithin);
   }
+  const durations = durationsNotSaid(card, answers, DURATION_PHRASES);
+  if (durations.length) {
+    kinds.push("invented duration (" + durations.join(", ") + ")");
+    fixes.push(CARD_FIX.duration + " Found: " + durations.join(", ") + ".");
+  }
   return { kinds, fixes };
 }
 
@@ -172,7 +194,13 @@ function deleteFailing(r: ArchitectReport, answers: string, debug: CheckDebug): 
       const unsupported = unsupportedItems(s, answers);
       const banned = bannedIn(s, BANNED_WORDING);
       const action = bannedIn(s, ACTION_PHRASES);
-      if (unsupported.length) remove.set(s, "not in their answers: " + unsupported.join(", "));
+      const phrases = bannedIn(s, CODE_BANNED_PHRASES);
+      const echo = REPORT_WORD_ECHO_PATTERNS.some((p) => p.test(s));
+      const durations = durationsNotSaid(s, answers, DURATION_PHRASES);
+      if (phrases.length) remove.set(s, "banned phrase: " + phrases.join(", "));
+      else if (echo) remove.set(s, "word echo");
+      else if (unsupported.length) remove.set(s, "not in their answers: " + unsupported.join(", "));
+      else if (durations.length) remove.set(s, "invented duration: " + durations.join(", "));
       else if (banned.length) remove.set(s, "banned wording: " + banned.join(", "));
       else if (action.length) remove.set(s, "advice wording: " + action.join(", "));
       else if (repeats.has(s)) remove.set(s, "repeats an earlier card");
@@ -180,7 +208,10 @@ function deleteFailing(r: ArchitectReport, answers: string, debug: CheckDebug): 
     }
     let text = cards[i];
     if (remove.size) {
-      for (const [sentence, reason] of remove) debug.deleted.push({ card: label(out, ref), sentence, reason, by: "code" });
+      for (const [sentence, reason] of remove) {
+        debug.deleted.push({ card: label(out, ref), sentence, reason, by: "code" });
+        if (/^(banned phrase|word echo|invented duration)/.test(reason)) debug.fired.push(label(out, ref) + ": " + reason.split(":")[0] + " deleted");
+      }
       text = removeSentences(text, new Set(remove.keys()));
     }
     if (hasDash(text)) {
@@ -278,15 +309,17 @@ export async function checkArchitectReport(
 
   // 3. The one AI check, retried once if the call fails. Each flagged sentence
   //    is edited (words removed only) or deleted.
-  const numbered: { n: number; text: string; ref: Ref | "old" | "new" }[] = [];
-  for (const ref of refs()) for (const t of sentencesOf(cardAt(r, ref))) numbered.push({ n: numbered.length + 1, text: t, ref });
-  for (const b of r.old_bullets) numbered.push({ n: numbered.length + 1, text: b, ref: "old" });
-  for (const b of r.new_bullets) numbered.push({ n: numbered.length + 1, text: b, ref: "new" });
+  const numbered: { n: number; text: string; section: string; ref: Ref | "old" | "new" }[] = [];
+  for (const ref of refs()) {
+    for (const t of sentencesOf(cardAt(r, ref))) numbered.push({ n: numbered.length + 1, text: t, section: r.sections[ref.s].name, ref });
+  }
+  for (const b of r.old_bullets) numbered.push({ n: numbered.length + 1, text: b, section: "Life by default bullets", ref: "old" });
+  for (const b of r.new_bullets) numbered.push({ n: numbered.length + 1, text: b, section: "Life by design bullets", ref: "new" });
   let flagged: FactFlag[] | null = null;
   for (let attempt = 1; attempt <= 2 && flagged === null; attempt++) {
     debug.aiCheck.attempts = attempt;
     try {
-      flagged = await deps.factCheck(numbered.map(({ n, text }) => ({ n, text })));
+      flagged = await deps.factCheck(numbered.map(({ n, text, section }) => ({ n, text, section })));
     } catch (e) {
       debug.aiCheck.error = e instanceof Error ? e.message : String(e);
     }
