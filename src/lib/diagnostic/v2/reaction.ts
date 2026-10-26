@@ -1,18 +1,20 @@
 // The code clean-up applied to every reaction before it is shown: sentences
 // that comment on the person's words ("the word X", "shows up 4 times"), tell
 // them what they "really" want or reach for a cause ("runs your"), or use
-// "chase" are deleted, dashes become commas, and the reaction is cut to 70
-// words at the end of a full sentence.
+// "chase", or use a timing or reference back the person never used ("at the
+// same time", "the old fear") are deleted, dashes become commas, and the
+// reaction is cut to 70 words at the end of a full sentence.
 //
 // Pure module.
 
-import { CODE_BANNED_PHRASES, WORD_ECHO_PATTERNS } from "./prompts.ts";
+import { CODE_BANNED_PHRASES, TIMING_PHRASES, WORD_ECHO_PATTERNS } from "./prompts.ts";
 import { REACTION_MAX_WORDS } from "./schema.ts";
-import { bannedIn, countWords, hasDash, removeSentences, replaceDashes, sentencesMatching, sentencesOf, trimAtSentence } from "./text.ts";
+import { bannedIn, countWords, durationsNotSaid, hasDash, removeSentences, replaceDashes, sentencesMatching, sentencesOf, trimAtSentence } from "./text.ts";
 
 const CHASE = [/\bchas(e|es|ed|ing)\b/i];
 
-export function cleanReaction(text: string): { text: string; fired: string[] } {
+/** `answers` is everything the person has typed so far, for the timing check. */
+export function cleanReaction(text: string, answers = ""): { text: string; fired: string[] } {
   const fired: string[] = [];
   let out = text.trim();
   const echo = sentencesMatching(out, WORD_ECHO_PATTERNS);
@@ -29,6 +31,11 @@ export function cleanReaction(text: string): { text: string; fired: string[] } {
   if (chase.length) {
     out = removeSentences(out, new Set(chase));
     fired.push('"chasing" deleted');
+  }
+  const timing = sentencesOf(out).filter((s) => durationsNotSaid(s, answers, TIMING_PHRASES).length > 0);
+  if (timing.length) {
+    out = removeSentences(out, new Set(timing));
+    fired.push("invented timing deleted (" + timing.flatMap((s) => durationsNotSaid(s, answers, TIMING_PHRASES)).join(", ") + ")");
   }
   if (hasDash(out)) {
     out = replaceDashes(out);

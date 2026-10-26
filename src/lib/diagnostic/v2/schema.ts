@@ -16,9 +16,10 @@ export const REACTION_SCHEMA = {
 export const REPORT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["hidden_tie", "sections", "old_bullets", "new_bullets"],
+  required: ["hidden_tie", "constraint", "sections", "old_bullets", "new_bullets"],
   properties: {
     hidden_tie: str,
+    constraint: str,
     sections: {
       type: "array",
       items: {
@@ -50,10 +51,10 @@ export const FACT_CHECK_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["n", "action", "edit", "reason"],
+        required: ["n", "verdict", "edit", "reason"],
         properties: {
           n: { type: "integer" },
-          action: { type: "string", enum: ["delete", "edit"] },
+          verdict: { type: "string", enum: ["DELETE", "EDIT"] },
           edit: str,
           reason: str,
         },
@@ -62,8 +63,22 @@ export const FACT_CHECK_SCHEMA = {
   },
 } as const;
 
+export const CONSTRAINT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["constraint"],
+  properties: { constraint: str },
+} as const;
+
 export interface ArchitectReport {
   hidden_tie: string;
+  /**
+   * "Your internal constraint is the belief that ..., and it is what stands
+   * between you and ...". Placed by the code as the last sentence of
+   * "Uncovered internal constraint" card 3; empty when there is none (and in
+   * reports made before it existed).
+   */
+  constraint?: string;
   sections: { name: string; cards: string[] }[];
   old_bullets: string[];
   new_bullets: string[];
@@ -92,6 +107,7 @@ export function parseReport(text: string, sectionNames: readonly string[]): Arch
   for (const b of [j.old_bullets, j.new_bullets]) if (!Array.isArray(b) || b.length !== 3 || !b.every(nonEmpty)) return null;
   return {
     hidden_tie: j.hidden_tie.trim(),
+    constraint: typeof j.constraint === "string" ? j.constraint.trim() : "",
     sections: j.sections.map((s, i) => ({ name: sectionNames[i] ?? s.name, cards: s.cards.map((c) => c.trim()) })),
     old_bullets: j.old_bullets!.map((b) => b.trim()),
     new_bullets: j.new_bullets!.map((b) => b.trim()),
@@ -105,9 +121,12 @@ export function parseCard(text: string): string | null {
 
 export interface FactFlag {
   n: number;
-  action: "delete" | "edit";
+  verdict: "DELETE" | "EDIT";
   edit: string;
+  /** One clean line, for the debug view. */
   reason: string;
+  /** The reason exactly as the model wrote it, for the keep-phrase check. */
+  raw: string;
 }
 
 /** The reason as one clean line: the first line, cut before any "However". */
@@ -121,13 +140,20 @@ export function parseFactCheck(text: string): FactFlag[] | null {
   const j = json(text) as { flagged?: unknown } | null;
   if (!j || !Array.isArray(j.flagged)) return null;
   return j.flagged
-    .filter((f): f is { n: number; action?: unknown; edit?: unknown; reason?: unknown } => !!f && Number.isInteger(f.n))
+    .filter((f): f is { n: number; verdict?: unknown; action?: unknown; edit?: unknown; reason?: unknown } => !!f && Number.isInteger(f.n))
     .map((f) => ({
       n: f.n,
-      action: f.action === "edit" ? "edit" : "delete",
+      // Anything but a clear EDIT is a delete.
+      verdict: String(f.verdict ?? f.action ?? "").toUpperCase() === "EDIT" ? "EDIT" : "DELETE",
       edit: typeof f.edit === "string" ? f.edit.trim() : "",
       reason: cleanReason(String(f.reason ?? "")),
+      raw: String(f.reason ?? ""),
     }));
+}
+
+export function parseConstraint(text: string): string | null {
+  const j = json(text) as { constraint?: unknown } | null;
+  return j && nonEmpty(j.constraint) ? j.constraint.trim() : null;
 }
 
 /** The reaction's hard length limit; it aims for about 55 words. */

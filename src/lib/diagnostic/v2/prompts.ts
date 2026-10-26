@@ -80,28 +80,42 @@ export const QUESTIONS: Record<DomainKey, string[]> = {
 
 /** The small grey hint under each question. Shown to the person only; never sent to the AI. */
 const HINTS_BASE: string[] = [
-  "Think about the home, the people around you, and the mood.",
+  "",
   "Think about what they said, what they did, and how their life looked from the outside.",
   "Think about a normal week. What you do, feel, and tell yourself.",
   "Think about what you were doing, how it felt, and what changed after.",
   "Something you lived or something you watched. Who was there, what happened, how it felt.",
   "Think about what you actually do, even if it's not what you wish you did.",
-  "Say what it looks like and feels like.",
+  "",
   "Think about how they talk, how they walk into a room, and how they handle a bad day.",
 ];
 
-export const QUESTION_HINTS: Record<DomainKey, string[]> = {
-  money: HINTS_BASE.map((h, i) => (i === 6 ? "Real numbers are best." : h)),
-  relationships: HINTS_BASE,
-  fitness: HINTS_BASE,
-  happiness: HINTS_BASE,
+/** The domain's own hints for question 1 and question 7; the rest are shared. */
+const DOMAIN_HINTS: Record<DomainKey, { q1: string; q7: string }> = {
+  money: {
+    q1: "Think about the home, the people around you, the mood, and what was said about money.",
+    q7: "Real numbers are best. Also say how it would feel and how you would see money by then.",
+  },
+  relationships: {
+    q1: "Think about the home, the people around you, the mood, and what was said about love and relationships.",
+    q7: "Say what it looks like and feels like, and how you would see relationships by then.",
+  },
+  fitness: {
+    q1: "Think about the home, the people around you, the mood, and what was said about food, exercise and bodies.",
+    q7: "Say what it looks like and feels like, and how you would see your body by then.",
+  },
+  happiness: {
+    q1: "Think about the home, the people around you, the mood, and what was said about happiness and peace.",
+    q7: "Say what it looks like and feels like, and how you would see life by then.",
+  },
 };
 
-/** The Yes / No taps at steps 9 and 10. */
-export const TAP_QUESTIONS: [string, string] = [
-  "Do you want to become more consistent with the person you just described?",
-  "Do you want to stop falling back into old patterns?",
-];
+export const QUESTION_HINTS = Object.fromEntries(
+  (Object.keys(DOMAIN_HINTS) as DomainKey[]).map((d) => [
+    d,
+    HINTS_BASE.map((h, i) => (i === 0 ? DOMAIN_HINTS[d].q1 : i === 6 ? DOMAIN_HINTS[d].q7 : h)),
+  ]),
+) as Record<DomainKey, string[]>;
 
 // ---------------------------------------------------------------------------
 // Screen text
@@ -115,8 +129,7 @@ export const UI_TEXT = {
   buildingDetail: "This usually takes about a minute. You can leave this page and come back.",
   reportFailed: "Something went wrong, try again.",
   tryAgain: "Try again",
-  yes: "Yes",
-  no: "No",
+  showReport: "Show me my report",
   continue: "Continue",
   oldPattern: "Life by default",
   newPattern: "Life by design",
@@ -163,12 +176,14 @@ Hard rules:
 - No cause and effect from childhood or the past to today, unless the person made that link themselves, in their own words, in this same answer. Do not say what something taught them, what it became, or that it sits behind, runs, or explains anything now. Reactions describe and mirror.
 - Stay on the topic of the question that was asked. If the question asks what they do when someone pulls away, say what they do in that situation, nothing wider (never "now it runs your relationships").
 - Never invent facts. No events, people, ages, places, numbers, quotes or things they did that are not in their answers.
+- Never add a feeling, a state or a timing they did not state. Keep their words: if they said they "didn't care", do not write that they "weren't scared" (and never the opposite of what they said). Do not refer back to "the old fear" or anything else they never named. Do not write "at the same time", "simultaneously" or "at once"; describe things in the order they gave.
+- Do not turn something good into a problem. If they describe something going well, mirror it as good. Never invent a gap, and never write "if there is one".
 - Never contradict or downplay what they said. A goal they stated is never denied: say "not only", never "never just". If they said something never happened, do not say it did.
 - Do not infer something they did not say or imply. Never tell them what they "really" or "actually" want.
 - Do not state what other people believed or meant more strongly than they said it. Stay close to their words.
 - Do not comment on how they wrote their answer (its length, its structure, the words they picked, how often a word appears).
 - Never state as fact anything about their looks, body, health, intelligence or worth.
-- Never write: "what you actually want", "what you really want", "what you're really", "the real goal", "the realest", "tells you something", "that tells me", "makes a certain kind of sense", "taught you that", "runs your", "it runs you", "the word", "you called it", "same word".
+- Never write: "what you actually want", "what you really want", "what you're really", "the real goal", "the realest", "tells you something", "that tells me", "makes a certain kind of sense", "taught you that", "runs your", "it runs you", "the word", "you called it", "same word", "if there is one".
 - Do not ask a question. Do not give advice or tasks.
 - No diagnoses. No medical claims. Never say thoughts, stress or fear cause an illness, an injury, or a physical condition.
 - Do not praise or encourage something harmful (self-harm, starving, cutting everyone off, revenge). Describe it neutrally.
@@ -181,17 +196,13 @@ Return only JSON: {"reaction": "...", "anchor": "...", "crisis": false}`;
 export const REACTION_SHAPES: string[] = [
   "Restate the home and the mood plainly, in their words, plus one light take about what that gave them (the shape, not the words: love came with a question mark). No cause claims.",
   "Restate who they looked up to and what they saw in them, plus one light take on what that showed them.",
-  "Restate where they are now, in their words. Name the gap between what they want and what they do, in their words. No cause.",
+  "Restate where they are now, in their words. If things are going well, say so and name what is working, in their words; do not invent a gap. Only if they describe a gap between what they want and what they do, name it in their words. No cause.",
   "Restate the good time and what changed afterwards, in their words.",
   "Restate the heaviest thing or things they gave, with care. Add a line about what it left them with ONLY if they said it or clearly showed it.",
   "Describe the pattern in what they actually DO in that situation, in their words. If the answer has two halves (for example what they do when it is really bad and when it slips a little), cover both.",
   "Mirror their goals in order (6 months, 12 months, beyond) and the feeling words they used, plainly. No commentary on any detail, no reading of where it comes from.",
   "Mirror the traits they described, quoting two or three of their own words. Say this person is already formed in their mind, and the gap is acting as them consistently, not finding them.",
 ];
-
-/** How to react after the first tap, leading into the last Yes / No question. */
-export const REACTION_AFTER_TAP9 =
-  "This reaction follows their Yes / No tap and leads into the last Yes / No question. Do not react to the tap. Name the repeating pattern across everything they said in all their answers, using only their own facts and numbers (for example: it keeps stopping right around the 3 month mark).";
 
 /**
  * Sentences in a reaction that comment on the person's words are deleted by
@@ -232,6 +243,13 @@ export const CODE_BANNED_PHRASES: string[] = [
   "makes a certain kind of sense",
   "runs your",
   "it runs you",
+  "where the real pattern lives",
+  "where the real work lives",
+  "look the same from the outside",
+  "looks the same from the outside",
+  "point in different directions",
+  "the gap, if there is one",
+  "if there is one",
 ];
 
 /**
@@ -240,6 +258,13 @@ export const CODE_BANNED_PHRASES: string[] = [
  * sentence is deleted.
  */
 export const DURATION_PHRASES: string[] = ["for years", "years of", "always", "every time", "all your life", "constantly"];
+
+/**
+ * Timings and references back that count as invented unless the person used
+ * the same wording. A reaction loses the sentence; a card is rewritten once,
+ * then the sentence is deleted.
+ */
+export const TIMING_PHRASES: string[] = ["at the same time", "simultaneously", "at once", "the old fear"];
 
 // ---------------------------------------------------------------------------
 // The report
@@ -270,12 +295,15 @@ export const ACTION_PHRASES: string[] = [
   "ask yourself",
   "get curious",
   "notice when",
-  "try to",
   "remind yourself",
 ];
 
-/** Bullets that read like a task are deleted. */
-export const BULLET_ACTION_PHRASES: string[] = [...ACTION_PHRASES, "remember to", "start doing", "make sure"];
+/**
+ * Advice wording that is also ordinary description ("when you try to push
+ * through"). These count only as an instruction: at the start of a sentence,
+ * or right after should, could, need to, must, let's or you can.
+ */
+export const INSTRUCTION_PHRASES: string[] = ["try to", "start doing", "remember to", "make sure"];
 
 export function buildReportSystem(): string {
   const [s1, s2, s3, s4] = SECTION_NAMES;
@@ -288,7 +316,9 @@ You will get: the domain, all 8 answers, THIN ANSWERS (answers under ${THIN_ANSW
 STEP 1: write hidden_tie (one sentence, shape below). It must be about meaning, different from the problem as the person stated it, and every fact in it must come from their answers. It must not contradict anything they said (for example, if they said they lock back in and get disciplined, do not say they lose their grip).
 "You say you want [goal]. But underneath, part of you has tied [goal] to [meaning], because [what they heard, saw or lived]. So when [situation], you [what they do], and that looks like [their stated problem]."
 
-STEP 2: write the cards below. Every card must serve the hidden_tie, but never print the hidden_tie as a label.
+STEP 2: write constraint, ONE sentence in exactly this shape: "Your internal constraint is the belief that [the old belief], and it is what stands between you and [their goal from answer 7]." It must agree with hidden_tie and follow every rule below.
+
+STEP 3: write the cards below. Every card must serve the hidden_tie, but never print the hidden_tie as a label.
 
 RULES
 - Assume boldly about MEANING (what things say about how they see themselves, the goal, the pattern). NEVER invent facts: no events, people, places, ages, numbers, dates, quotes or actions that are not in their answers. If they gave a number, use it exactly. When you write "you said", it must be something they actually said.
@@ -302,11 +332,14 @@ RULES
 - Each card has a different job and draws on different answers. Do not retell the same idea in the same words. Never repeat a phrase of 5 or more words inside one card.
 - Plain, simple English. Sentences of 20 words or fewer. One idea per sentence. Each card 55 to 95 words. Whole report 800 to 1100 words. Speak to "you". No metaphors that need decoding. No flourishes that sound deep but say nothing.
 - No time shifts: keep every time reference exactly as they said it. If they said "until the next morning", do not write "that morning".
+- No feelings, states or timings they did not state. Keep their words: "didn't care" must not become "wasn't scared", and never write the opposite of what they said. A phrase like "the old fear" may only refer back to something already named in the same card. Do not write "at the same time", "simultaneously" or "at once"; describe things in the order they gave them.
+- Do not turn positives into problems. Something they say is going well is mirrored as going well. Never invent a gap, and never write "if there is one".
+- The last sentence of every card, and every section point, names the specific thing in plain words (what they do, what they believe, what it costs them), using their facts. No aphorisms, no abstract lines that could be said to anyone (never "that is where the real pattern lives").
 - Never write about other people's health or private details. Do not diagnose. No medical claims. Never say that thoughts, stress, fear or expectations cause illness, injury or a physical condition.
 - No invented durations or frequencies. Write "for years", "years of", "always", "every time", "all your life" or "constantly" only if the person used that wording. One set of friends who stopped texting is not "years of pulling back".
 - Never tell them what they "really" or "actually" want. Never write: ${CODE_BANNED_PHRASES.map((w) => '"' + w + '"').join(", ")}.
 - Do not comment on how they wrote their answers (never "you used that word", "the word X", "same word", "you called it").
-- No task, instruction or advice anywhere, in any card or bullet. The ONE exception is the single direction line in "${s4}" card 3 (shape below), which describes a new way of seeing and acting and is not a task. Never write "pause before", "ask yourself", "get curious", "notice when", "try to", "remind yourself", "remember to", "start doing", "this week", or steps or dates.
+- No task, instruction or advice anywhere, in any card or bullet. The ONE exception is the single direction line in "${s4}" card 3 (shape below), which describes a new way of seeing and acting and is not a task. Never write "pause before", "ask yourself", "get curious", "notice when", "remind yourself", "this week", or steps or dates, and never tell them to "try to", "start doing", "remember to" or "make sure".
 - Do not praise or encourage anything harmful.
 - No em dashes or en dashes anywhere; use a period or a comma.
 - Never use the words "chase" or "chasing"; say building toward, working toward, or going after.
@@ -315,16 +348,16 @@ RULES
 
 CARDS (3 per section; the last card of each section ends with ONE plain sentence of about 20 words that states the point of the whole section, shape only: "So the thing that started at home is still deciding how you read every setback.")
 (1) "${s1}": Card 1 retells their childhood: the home, who was around, what they said (answer 1). Card 2 is who they looked up to and what that taught them (answer 2), in their words. Card 3 is how today connects back to this (answers 3 and 4), then the section point.
-(2) "${s2}": Card 1 is the most emotional experience they described (answer 5), the centre of it all: say what it did to how they see themselves, and quote their strongest line. Card 2 is surface story vs real story: what they think the problem is, then what it is underneath (the hidden_tie in plain words). This is the most important card. Card 3 is how they react when things go wrong (answer 6), using BOTH halves of that answer if it has two (for example what they do when it is really bad and when it slips a little), then the section point.
-(3) "${s3}": the same template every time. Card 1: what they believe and expect, shown with their facts and numbers. Card 2: how they see things and react when something goes wrong. Card 3: where their attention goes and the thought that keeps coming back, then the section point, then end with exactly this line, once: "${DEFAULT_CLOSING}"
+(2) "${s2}": Card 1 is the most emotional experience they described (answer 5), the centre of it all: say what it did to how they see themselves, and quote their strongest line. Card 2 is surface story vs real story: what they think the problem is, then what it is underneath (the hidden_tie in plain words). This is the most important card. Card 3 is how they react when things go wrong (answer 6), using BOTH halves of that answer if it has two (for example what they do when it is really bad and when it slips a little), then the section point. The code replaces that section point with your "constraint" sentence.
+(3) "${s3}": the same template every time. Card 1: what they believe and expect, shown with their facts and numbers. Card 2: how they see things and react when something goes wrong. Card 3: where their attention goes and the thought that keeps coming back, then one plain sentence on what this pattern costs them now, using their facts, then the section point, then end with exactly this line, once: "${DEFAULT_CLOSING}"
 (4) "${s4}": do NOT retell the origin story here (parents, childhood, their first model of the goal); the first two sections already covered it.
-Card 1, forecast: "If nothing shifts, ..." for the next six months, built ONLY from facts the person gave, using "likely", with no new events and no invented durations, 70 to 90 words.
-Card 2, key insight and new belief: say once, in one short sentence, "Your block isn't [what they think the problem is]. It's [the old belief]." Then say what will happen at the moment they try (the resistance they will feel, in their situation). Then state the NEW belief as the direct opposite of the old belief, in one plain sentence.
+Card 1, forecast: "If nothing shifts, ..." 3 to 4 short plain sentences, about 45 to 70 words. Each sentence is a concrete picture of their situation six months from now, built ONLY from facts the person gave, using "likely", with no new events and no invented durations. No "not because X but because Y". No abstract reasoning.
+Card 2, key insight and new belief: say once, in one short sentence, "Your block isn't [what they think the problem is]. It's [the old belief]." Then say what will happen at the moment they try (the resistance they will feel, in their situation). Then state the NEW belief in one plain sentence: the direct opposite of the old belief, tied to something they do now and to one of their goals from answer 7.
 Card 3, proof and the new way: their own words from answer 8 back to them; one or two specific facts from their own life that show the new belief is possible; then ONE line in this shape: stop letting [the old belief] decide, and act as if [the new belief] is already true, even before you feel ready. Then the section point, then end with exactly this line, once: "${DESIGN_CLOSING}" That one line is the only direction in the report. No steps, no dates, no "this week".
 Final screen: 3 bullets for "${UI_TEXT.oldPattern}" and 3 for "${UI_TEXT.newPattern}", each at most 9 words. They are short phrases about how they act or how they see things, built from their own facts (shape: "Treating setbacks as interruptions, not proof against you"). Never tasks, instructions or advice.
 
 Return only JSON:
-{"hidden_tie": "...", "sections": [{"name":"${s1}","cards":["","",""]}, {"name":"${s2}","cards":["","",""]}, {"name":"${s3}","cards":["","",""]}, {"name":"${s4}","cards":["","",""]}], "old_bullets":["","",""], "new_bullets":["","",""]}`;
+{"hidden_tie": "...", "constraint": "...", "sections": [{"name":"${s1}","cards":["","",""]}, {"name":"${s2}","cards":["","",""]}, {"name":"${s3}","cards":["","",""]}, {"name":"${s4}","cards":["","",""]}], "old_bullets":["","",""], "new_bullets":["","",""]}`;
 }
 
 /** What each card is for, used when one card is rewritten on its own. */
@@ -337,23 +370,23 @@ export const CARD_ROLES: string[][] = [
   [
     "The most emotional experience they described (answer 5), the centre of it all: what it did to how they see themselves, and their strongest line quoted.",
     "Surface story vs real story: what they think the problem is, then what it is underneath (the hidden tie in plain words, never labelled). One soft word allowed.",
-    "How they react when things go wrong (answer 6), using both halves of that answer if it has two, ending with one plain sentence stating the point of the section.",
+    "How they react when things go wrong (answer 6), using both halves of that answer if it has two. Do not end with a section point: the code adds the constraint sentence as the last sentence.",
   ],
   [
     "What they believe and expect, shown with their own facts and numbers.",
     "How they see things and react when something goes wrong.",
-    "Where their attention goes and the thought that keeps coming back, then one plain sentence stating the point of the section, then exactly: \"" + DEFAULT_CLOSING + "\"",
+    "Where their attention goes and the thought that keeps coming back, then one plain sentence on what this pattern costs them now, using their facts, then one plain sentence stating the point of the section, then exactly: \"" + DEFAULT_CLOSING + "\"",
   ],
   [
-    "\"If nothing shifts, ...\" forecast for the next six months, built ONLY from facts the person gave, using \"likely\", no new events, no invented durations, 70 to 90 words. Do not retell the origin story. If SENSITIVE is true, instead a gentle card about what they have been carrying.",
-    "Key insight and new belief: once, in one short sentence, \"Your block isn't [what they think the problem is]. It's [the old belief].\" Then what will happen at the moment they try (the resistance they will feel, in their situation). Then the NEW belief, the direct opposite of the old one, in one plain sentence. Do not retell the origin story. One soft word allowed.",
+    "\"If nothing shifts, ...\" forecast: 3 to 4 short plain sentences, about 45 to 70 words, each a concrete picture of their situation six months from now, built ONLY from facts the person gave, using \"likely\", no new events, no invented durations, no \"not because X but because Y\", no abstract reasoning. Do not retell the origin story. If SENSITIVE is true, instead a gentle card about what they have been carrying.",
+    "Key insight and new belief: once, in one short sentence, \"Your block isn't [what they think the problem is]. It's [the old belief].\" Then what will happen at the moment they try (the resistance they will feel, in their situation). Then the NEW belief in one plain sentence: the direct opposite of the old one, tied to something they do now and to one of their goals from answer 7. Do not retell the origin story. One soft word allowed.",
     "Proof and the new way: their own words from answer 8; one or two specific facts from their own life that show the new belief is possible; then ONE line shaped: stop letting [the old belief] decide, and act as if [the new belief] is already true, even before you feel ready; then one plain sentence stating the point of the section, then exactly: \"" + DESIGN_CLOSING + "\" Do not retell the origin story. No steps, no dates, no \"this week\".",
   ],
 ];
 
 export const CARD_REGEN_SYSTEM = `You are rewriting ONE card of a personal Architect report. You get the person's answers, the hidden tie the report is built on, what this card is for, the other cards (do not repeat them), the current card, and what to fix.
 
-Rules: plain simple English, sentences of 20 words or fewer, 55 to 95 words, speak to "you". Use at least 2 concrete details from their answers if they exist. Assume boldly about meaning, but never invent facts: no events, people, places, ages, numbers, dates, quotes or actions that are not in their answers. Never contradict or downplay what they said, and never deny a goal they stated. Do not state what other people believed or meant more strongly than the person said. Never state as fact anything about their looks, body, health, intelligence or worth. Do not repeat sentences or phrases from the other cards, and never repeat a phrase of 5 or more words inside this card. No medical claims. No task, instruction or advice of any kind: never "pause before", "ask yourself", "get curious", "notice when", "try to", "remind yourself", "this week". The only exception is the single line in Life by design card 3 shaped "stop letting [the old belief] decide, and act as if [the new belief] is already true, even before you feel ready", which you keep if this is that card. In Life by design, do not retell the origin story (parents, childhood). No invented durations or frequencies ("for years", "years of", "always", "every time", "all your life", "constantly") unless the person used that wording. Never tell them what they "really" or "actually" want. Never comment on the words they used. Never print the hidden tie as a label. No em dashes or en dashes. Never use "chase" or "chasing". Do not use this wording: ${BANNED_WORDING.map((w) => '"' + w + '"').join(", ")}.
+Rules: plain simple English, sentences of 20 words or fewer, 55 to 95 words, speak to "you". Use at least 2 concrete details from their answers if they exist. Assume boldly about meaning, but never invent facts: no events, people, places, ages, numbers, dates, quotes or actions that are not in their answers. Never contradict or downplay what they said, and never deny a goal they stated. Do not state what other people believed or meant more strongly than the person said. Never state as fact anything about their looks, body, health, intelligence or worth. Do not repeat sentences or phrases from the other cards, and never repeat a phrase of 5 or more words inside this card. No medical claims. No task, instruction or advice of any kind: never "pause before", "ask yourself", "get curious", "notice when", "remind yourself", "this week", and never tell them to "try to", "start doing", "remember to" or "make sure". The only exception is the single line in Life by design card 3 shaped "stop letting [the old belief] decide, and act as if [the new belief] is already true, even before you feel ready", which you keep if this is that card. In Life by design, do not retell the origin story (parents, childhood). No invented durations or frequencies ("for years", "years of", "always", "every time", "all your life", "constantly") unless the person used that wording. Never tell them what they "really" or "actually" want. Never comment on the words they used. Never print the hidden tie as a label. No feelings, states or timings they did not state ("didn't care" never becomes "wasn't scared"); "the old fear" only refers back to something named in this card; never "at the same time", "simultaneously" or "at once", keep the order they gave. Do not turn positives into problems, never invent a gap, never "if there is one". The last sentence names the specific thing in plain words, never an aphorism. No em dashes or en dashes. Never use "chase" or "chasing". Do not use this wording: ${BANNED_WORDING.map((w) => '"' + w + '"').join(", ")}.
 
 Return only JSON: {"card": "..."}`;
 
@@ -367,6 +400,8 @@ export const CARD_FIX = {
   repeated: "Do not repeat sentences or phrases that already appear in the other cards. Say something new.",
   repeatedWithin: "Do not repeat a phrase of 5 or more words inside this card.",
   short: "The card is too short. Write it again from their answers, 55 to 95 words.",
+  timing: "Remove the timing or reference back the person never gave (at the same time, simultaneously, at once, the old fear). Describe things in the order they gave. Change as few words as possible.",
+  afterDeletions: "This card lost sentences in the checks and is now too short. Write it again from their answers, 55 to 95 words, without repeating what was deleted or why it was deleted:",
   duration: "Remove the duration or frequency the person never gave (for years, years of, always, every time, all your life, constantly). Change as few words as possible.",
 };
 
@@ -385,15 +420,60 @@ Flag a sentence ONLY if it does one of these:
 7. claims what other people believed or meant beyond what the person said;
 8. is garbled or ungrammatical;
 9. invents a duration or frequency (for example "the years of pulling back from friends" when they described one set of friends who stopped texting, or "always" or "every time" for something they described once);
-10. is in the section "Life by design" and retells the origin story from "Where it started" or "Uncovered internal constraint" (parents, childhood, their first model): delete it.
+10. is in the section "Life by design" and retells the origin story from "Where it started" or "Uncovered internal constraint" (parents, childhood, their first model): delete it;
+11. states a feeling or state they never stated, including the opposite of what they said (for example "you weren't scared" when they said they "didn't care");
+12. refers back to something never named before it (for example "the old fear" when no fear was named);
+13. gives a timing or order they never gave ("at the same time", "right away", "immediately", "years", when they gave no such timing or a different order);
+14. is an abstract aphorism with no concrete claim about the person (for example "That is where the real pattern lives."): delete it.
 
 Do NOT flag interpretations of meaning, motives, feelings, patterns, or the hidden belief. Those are the point of the report.
 
-For each flagged sentence choose:
-- "edit": only if removing some words fixes it. The edit must be the same sentence with words removed and nothing added, reordered or reworded.
-- "delete": otherwise.
+Only return an entry if you intend to delete or edit that sentence. Never return an entry to say a sentence is fine. For each entry set "verdict":
+- "EDIT": only if removing some words fixes it. "edit" must be the same sentence with words removed and nothing added, reordered or reworded.
+- "DELETE": otherwise ("edit" is "").
 If deleting or editing a sentence leaves the sentence after it dangling (it points back at what was removed, for example "That same follow-through is in you."), flag that one too.
 
 The reason is one short line stating the decision, for example "Invents an age they never gave." No "however", no second thoughts.
 
-Return only JSON: {"flagged": [{"n": 3, "action": "delete", "edit": "", "reason": "..."}]}. If nothing is wrong, return {"flagged": []}.`;
+Return only JSON: {"flagged": [{"n": 3, "verdict": "DELETE", "edit": "", "reason": "..."}]}. If nothing is wrong, return {"flagged": []}.`;
+
+/**
+ * An AI check entry whose reason has one of these is ignored and the
+ * sentence kept: the model changed its mind ("rescind", "is fine").
+ */
+export const FACT_CHECK_KEEP_PHRASES: string[] = [
+  "rescind",
+  "no flag needed",
+  "is fine",
+  "is fine on its own",
+  "keeping as-is",
+  "keep as is",
+  "no change needed",
+];
+
+/** The narrow check on one card that lost a sentence in the AI check. */
+export const DANGLING_CHECK_SYSTEM = `You check ONE card of a personal report after some of its sentences were deleted. You get the sentences that were deleted and the card as it is now, as numbered sentences. Nothing you write is shown to the person.
+
+Return an entry ONLY for a sentence that:
+1. refers back to something that is no longer in the card: it starts with "That", "This", "Those", "It" or "They" and points at a deleted sentence, or it says "the [something]" when that something is never mentioned earlier in the card (for example "That capacity is still in you." when the sentence about the capacity was deleted);
+2. claims proof or evidence ("this shows", "that proves", "the proof is") when no fact supporting it is left in the card.
+
+Only return an entry if you intend to delete or edit that sentence. Never return an entry to say a sentence is fine. For each entry set "verdict":
+- "EDIT": only if removing some words fixes it. "edit" must be the same sentence with words removed and nothing added, reordered or reworded.
+- "DELETE": otherwise ("edit" is "").
+
+The reason is one short line stating the decision.
+
+Return only JSON: {"flagged": [{"n": 2, "verdict": "DELETE", "edit": "", "reason": "..."}]}. If nothing is wrong, return {"flagged": []}.`;
+
+/** Writes only the constraint sentence, when the report came back without one. */
+export const CONSTRAINT_SYSTEM = `You write ONE sentence for a personal Architect report. You get the person's answers and the hidden tie the report is built on.
+
+Write it in exactly this shape: "Your internal constraint is the belief that [the old belief], and it is what stands between you and [their goal from answer 7]."
+
+It must agree with the hidden tie. Use only facts from their answers; never invent events, people, numbers or quotes. Plain simple English, speak to "you". No em dashes or en dashes. Never use "chase" or "chasing".
+
+Return only JSON: {"constraint": "..."}`;
+
+/** The start every constraint sentence must have. */
+export const CONSTRAINT_START = "Your internal constraint is the belief that";

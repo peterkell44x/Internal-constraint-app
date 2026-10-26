@@ -260,7 +260,7 @@ details.transcript-details summary { cursor: pointer; font-size: 13px; color: va
 .internals-round { border-top: 1px solid var(--border); padding-top: 6px; margin-top: 8px; }
 .internals-pre { white-space: pre-wrap; background: var(--muted-bg); border-radius: 8px; padding: 10px 12px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 
-/* Architect diagnosis: progress, answers, taps, halfway */
+/* Architect diagnosis: progress, answers, halfway, report button */
 .progress { height: 6px; background: var(--muted-bg); border-radius: 999px; overflow: hidden; }
 .progress-fill { height: 100%; background: var(--accent); transition: width 0.3s ease; }
 .progress-label { margin: 6px 0 12px; }
@@ -275,8 +275,6 @@ details.transcript-details summary { cursor: pointer; font-size: 13px; color: va
 }
 .answer-box textarea:focus { border-color: var(--accent); }
 .answer-row { display: flex; justify-content: space-between; align-items: center; }
-.tap-row { display: flex; gap: 10px; }
-.tap-row button { flex: 1; padding: 14px; font-size: 15px; }
 .halfway-card {
   background: var(--accent-bg); color: var(--accent-text); border-radius: 12px;
   padding: 18px; display: flex; flex-direction: column; gap: 12px; font-size: 15px;

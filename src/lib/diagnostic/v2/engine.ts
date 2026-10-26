@@ -4,11 +4,22 @@ import Anthropic from "@anthropic-ai/sdk";
 
 import type { DomainKey } from "../domains";
 import { checkArchitectReport, type CheckDebug } from "./checks";
-import { boldnessFor, isSensitive, TAP_REACTION_STEP, type Flow, type Reaction } from "./flow";
-import { answersText, buildCardInput, buildFactCheckInput, buildReactionInput, buildReportInput } from "./inputs";
+import { boldnessFor, isSensitive, type Flow, type Reaction } from "./flow";
+import {
+  answersText,
+  buildCardInput,
+  buildConstraintInput,
+  buildDanglingInput,
+  buildFactCheckInput,
+  buildReactionInput,
+  buildReportInput,
+} from "./inputs";
 import {
   buildReportSystem,
   CARD_REGEN_SYSTEM,
+  CONSTRAINT_START,
+  CONSTRAINT_SYSTEM,
+  DANGLING_CHECK_SYSTEM,
   FACT_CHECK_SYSTEM,
   REACTION_SYSTEM,
   SECTION_NAMES,
@@ -19,15 +30,17 @@ import { cleanReaction } from "./reaction";
 import {
   type ArchitectReport,
   CARD_SCHEMA,
+  CONSTRAINT_SCHEMA,
   FACT_CHECK_SCHEMA,
   parseCard,
+  parseConstraint,
   parseFactCheck,
   parseReaction,
   parseReport,
   REACTION_SCHEMA,
   REPORT_SCHEMA,
 } from "./schema";
-import { anchorInAnswers, countWords, hasDash } from "./text";
+import { anchorInAnswers, countWords, hasDash, normalize } from "./text";
 
 // The same model the app has always used, overridable with ANTHROPIC_MODEL.
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
@@ -56,18 +69,16 @@ function message(e: unknown): string {
 }
 
 /**
- * The reaction to one answer (steps 1 to 8) or to the first tap (step 9).
- * Retried once if the call fails, the reply can't be used, its anchor isn't
+ * The reaction to one answer (steps 1 to 8). Retried once if the call fails, the reply can't be used, its anchor isn't
  * in their answers, or it has a dash. After that the code clean-up fixes what
  * it can, and if nothing usable is left, the neutral line is shown, so the
  * chat is never blocked.
  */
 export async function generateReaction(domain: DomainKey, f: Flow, step: number): Promise<Reaction> {
-  const tap = step === TAP_REACTION_STEP;
-  const thin = !tap && countWords(f.answers[step - 1] ?? "") < THIN_ANSWER_WORDS;
+  const thin = countWords(f.answers[step - 1] ?? "") < THIN_ANSWER_WORDS;
   const boldness = boldnessFor(step);
   const input = buildReactionInput(domain, f, step, boldness, thin);
-  const answers = (tap ? f.answers : f.answers.slice(0, step)).join("\n");
+  const answers = f.answers.slice(0, step).join("\n");
   const problems: string[] = [];
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
@@ -82,7 +93,7 @@ export async function generateReaction(domain: DomainKey, f: Flow, step: number)
         problems.push("attempt 1: " + [!anchorOk && "anchor not found in their answers", dash && "em dash"].filter(Boolean).join(", "));
         continue;
       }
-      const { text, fired } = cleanReaction(parsed.reaction);
+      const { text, fired } = cleanReaction(parsed.reaction, answers);
       if (!text) {
         problems.push("attempt " + attempt + ": nothing left after the code checks");
         continue;
@@ -103,7 +114,14 @@ export interface ArchitectChecks extends CheckDebug {
   sensitive: boolean;
   reportAttempts: number;
   reportProblems: string[];
+  /** Where the constraint sentence came from: the report, a second call, or nowhere. */
+  constraintSource: "report" | "regenerated" | "missing";
   ms: number;
+}
+
+/** True when a constraint sentence has the required opening. */
+function constraintOk(text: string | undefined): boolean {
+  return !!text && normalize(text).startsWith(normalize(CONSTRAINT_START));
 }
 
 /**
@@ -133,6 +151,20 @@ export async function generateArchitectReport(
   }
   if (!original) throw new Error("The report could not be written (" + problems.join("; ") + ")");
 
+  // The constraint sentence: if the report has none (or not in its shape),
+  // one more call writes only that; if that fails too, the report ships without it.
+  let constraintSource: ArchitectChecks["constraintSource"] = "report";
+  if (!constraintOk(original.constraint)) {
+    let again: string | null = null;
+    try {
+      again = parseConstraint(await callJSON(CONSTRAINT_SYSTEM, buildConstraintInput(domain, f, original.hidden_tie), CONSTRAINT_SCHEMA, 400));
+    } catch (e) {
+      problems.push("constraint call: " + message(e));
+    }
+    constraintSource = constraintOk(again ?? undefined) ? "regenerated" : "missing";
+    original = { ...original, constraint: constraintSource === "regenerated" ? again! : "" };
+  }
+
   const answers = answersText(f);
   const { report, debug } = await checkArchitectReport(original, answers, {
     async regenerate(section, card, fixes, current) {
@@ -150,6 +182,11 @@ export async function generateArchitectReport(
       if (flagged === null) throw new Error("the fact check reply was not valid");
       return flagged;
     },
+    async danglingCheck(_section, _card, numbered, deleted) {
+      const flagged = parseFactCheck(await callJSON(DANGLING_CHECK_SYSTEM, buildDanglingInput(numbered, deleted), FACT_CHECK_SCHEMA, 1000));
+      if (flagged === null) throw new Error("the card check reply was not valid");
+      return flagged;
+    },
   });
   if (debug.aiCheck.status === "failed") console.error("Report AI check failed twice; shipped with code checks only", debug.aiCheck.error);
 
@@ -162,6 +199,7 @@ export async function generateArchitectReport(
       sensitive,
       reportAttempts: attempts,
       reportProblems: problems,
+      constraintSource,
       ms: Date.now() - started,
       ...debug,
     },

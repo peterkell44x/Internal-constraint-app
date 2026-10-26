@@ -5,8 +5,8 @@
 
 import type { DomainKey } from "../domains.ts";
 import type { Boldness, Flow } from "./flow.ts";
-import { ANSWER_STEPS, TAP_REACTION_STEP } from "./flow.ts";
-import { CARD_ROLES, DOMAIN_LABELS, QUESTION_JOBS, QUESTIONS, REACTION_AFTER_TAP9, REACTION_SHAPES, TAP_QUESTIONS, THIN_ANSWER_WORDS } from "./prompts.ts";
+import { ANSWER_STEPS } from "./flow.ts";
+import { CARD_ROLES, DOMAIN_LABELS, QUESTION_JOBS, QUESTIONS, REACTION_SHAPES, THIN_ANSWER_WORDS } from "./prompts.ts";
 import type { ArchitectReport } from "./schema.ts";
 import { countWords } from "./text.ts";
 
@@ -22,24 +22,9 @@ function qa(domain: DomainKey, answers: string[], upTo: number): string {
     .join("\n\n");
 }
 
-/**
- * The input for one reaction. Steps 1 to 8 react to that answer; step 9
- * reacts to the first tap by naming the pattern across all answers.
- */
+/** The input for the reaction to one answer (steps 1 to 8). */
 export function buildReactionInput(domain: DomainKey, f: Flow, step: number, boldness: Boldness, thin: boolean): string {
   const lines = ["DOMAIN: " + DOMAIN_LABELS[domain]];
-  if (step === TAP_REACTION_STEP) {
-    lines.push(
-      "QUESTION: " + TAP_QUESTIONS[0],
-      "WHAT THIS QUESTION IS FOR: " + REACTION_AFTER_TAP9,
-      "HOW TO REACT TO THIS QUESTION: " + REACTION_AFTER_TAP9,
-      "ALL ANSWERS:\n" + qa(domain, f.answers, ANSWER_STEPS),
-      "LATEST ANSWER (a tap): " + (f.taps[0] ? "Yes" : "No"),
-      "BOLDNESS: " + boldness,
-      "THIN_ANSWER: false",
-    );
-    return lines.join("\n\n");
-  }
   const i = step - 1;
   lines.push(
     "QUESTION: " + QUESTIONS[domain][i],
@@ -61,8 +46,7 @@ export function thinAnswers(f: Flow): string {
 
 /**
  * The input for the report: the domain, all 8 answers, which answers are
- * thin, and SENSITIVE. The Yes / No taps are left out: they are not facts
- * about the person, and the report must not mention them.
+ * thin, and SENSITIVE. Taps saved by older diagnostics are left out.
  */
 export function buildReportInput(domain: DomainKey, f: Flow, sensitive: boolean): string {
   return [
@@ -94,6 +78,9 @@ export function buildCardInput(
     "THIN ANSWERS: " + thinAnswers(f),
     "SENSITIVE: " + (sensitive ? "true" : "false"),
     "HIDDEN TIE: " + report.hidden_tie,
+    ...(section === 1 && card === 2 && report.constraint
+      ? ["CONSTRAINT: the code adds this as the last sentence of this card. Do not write it, and do not end with a section point: " + report.constraint]
+      : []),
     "THIS CARD: " + report.sections[section].name + ", card " + (card + 1) + ". It is for: " + CARD_ROLES[section][card],
     "OTHER CARDS:\n" + others,
     "CURRENT CARD: " + report.sections[section].cards[card],
@@ -107,4 +94,17 @@ export function buildFactCheckInput(domain: DomainKey, f: Flow, numbered: { n: n
     "ANSWERS:\n" + qa(domain, f.answers, ANSWER_STEPS),
     "REPORT, NUMBERED SENTENCES:\n" + numbered.map((s) => "[" + s.n + "] (" + s.section + ") " + s.text).join("\n"),
   ].join("\n\n");
+}
+
+/** The input for the narrow check on one card that lost sentences: what was deleted, and the card now. */
+export function buildDanglingInput(numbered: { n: number; text: string }[], deleted: string[]): string {
+  return [
+    "DELETED SENTENCES:\n" + deleted.map((d) => "- " + d).join("\n"),
+    "THE CARD NOW, NUMBERED SENTENCES:\n" + numbered.map((s) => "[" + s.n + "] " + s.text).join("\n"),
+  ].join("\n\n");
+}
+
+/** The input for writing only the constraint sentence. */
+export function buildConstraintInput(domain: DomainKey, f: Flow, hiddenTie: string): string {
+  return ["DOMAIN: " + DOMAIN_LABELS[domain], "ANSWERS:\n" + qa(domain, f.answers, ANSWER_STEPS), "HIDDEN TIE: " + hiddenTie].join("\n\n");
 }

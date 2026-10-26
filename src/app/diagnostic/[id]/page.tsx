@@ -10,7 +10,7 @@ import { canSeeReportInternals } from "@/lib/debug";
 import { DOMAINS } from "@/lib/diagnostic/domains";
 import { findOwnedDiagnostic, toView } from "@/lib/diagnostic/store";
 import { parseFlow, rendererFor } from "@/lib/diagnostic/v2/flow";
-import { DOMAIN_LABELS, QUESTION_HINTS, QUESTIONS, SECTION_NAMES, TAP_QUESTIONS, UI_TEXT } from "@/lib/diagnostic/v2/prompts";
+import { DOMAIN_LABELS, QUESTION_HINTS, QUESTIONS, SECTION_NAMES, UI_TEXT } from "@/lib/diagnostic/v2/prompts";
 
 export default async function DiagnosticPage({ params }: PageProps<"/diagnostic/[id]">) {
   const user = await requireUser();
@@ -29,7 +29,6 @@ export default async function DiagnosticPage({ params }: PageProps<"/diagnostic/
           subtitle={DOMAIN_LABELS[d.domain]}
           questions={QUESTIONS[d.domain]}
           hints={QUESTION_HINTS[d.domain]}
-          tapQuestions={[...TAP_QUESTIONS]}
           sectionNames={[...SECTION_NAMES]}
           text={UI_TEXT}
         />

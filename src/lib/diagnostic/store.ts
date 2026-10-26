@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { isDomainKey, type DomainKey } from "./domains";
 import type { ChatMessage } from "./engine";
 import { BEGIN_MESSAGE } from "./prompts";
-import { parseFlow, type Flow } from "./v2/flow";
+import { ANSWER_STEPS, parseFlow, type Flow } from "./v2/flow";
 import type { ArchitectReport } from "./v2/schema";
 
 export type DiagnosticStatus = "in_progress" | "ready" | "generating" | "completed";
@@ -41,7 +41,7 @@ export interface DiagnosticView {
   reportError: string | null;
   /** 1: the retired open chat; 2: the Architect diagnosis. */
   version: number;
-  /** Version 2: answers, taps and reactions so far (debug fields left out). */
+  /** Version 2: answers and reactions so far (debug fields left out; taps only in older ones). */
   flow: Flow | null;
   /** Version 2: the report cards and bullets. The hidden tie is debug only and not included. */
   architectReport: Omit<ArchitectReport, "hidden_tie"> | null;
@@ -52,7 +52,7 @@ export interface DiagnosticView {
 /** The flow without debug fields, as the browser may see it. */
 function publicFlow(d: Diagnostic): Flow {
   const f = parseFlow(d.flow);
-  return { ...f, reactions: f.reactions.map((r) => ({ step: r.step, text: r.text, crisis: r.crisis })) };
+  return { ...f, taps: [], reactions: f.reactions.filter((r) => r.step <= ANSWER_STEPS).map((r) => ({ step: r.step, text: r.text, crisis: r.crisis })) };
 }
 
 function publicReport(d: Diagnostic): Omit<ArchitectReport, "hidden_tie"> | null {

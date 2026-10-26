@@ -270,3 +270,33 @@ export function durationsNotSaid(text: string, answers: string, phrases: string[
   const said = " " + normalize(answers) + " ";
   return bannedIn(text, phrases).filter((p) => !said.includes(" " + normalize(p) + " "));
 }
+
+const INSTRUCTION_LEAD = /^(?:just)?$|\b(?:should|could|need to|needs to|must|lets|you can)(?: just)?$/;
+
+/**
+ * The phrases a text uses as an instruction: at the start of a sentence
+ * ("Try to relax.") or right after should, could, need to, must, let's or
+ * you can ("you can try to rest"). "When you try to push through" is not one.
+ */
+export function instructionsIn(text: string, phrases: string[]): string[] {
+  const found = new Set<string>();
+  for (const s of sentencesOf(text)) {
+    const n = " " + normalize(s) + " ";
+    for (const p of phrases) {
+      const key = " " + normalize(p) + " ";
+      for (let at = n.indexOf(key); at !== -1; at = n.indexOf(key, at + 1)) {
+        if (INSTRUCTION_LEAD.test(n.slice(0, at).trim())) found.add(p);
+      }
+    }
+  }
+  return [...found];
+}
+
+/** True when a fact check reason says the sentence should stay ("rescind", "is fine"). */
+export function saysKeep(reason: string, keepPhrases: string[]): boolean {
+  const n = " " + normalize(reason) + " ";
+  return keepPhrases.some((p) => {
+    const k = normalize(p);
+    return k === "rescind" ? /\brescind/.test(n) : n.includes(" " + k + " ");
+  });
+}

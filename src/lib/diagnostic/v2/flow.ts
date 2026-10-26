@@ -1,18 +1,20 @@
-// The Architect chat as a step machine: 8 fixed questions, then 2 Yes / No
-// taps. A short reaction follows each answer and the first tap. The whole
-// state is saved after every step, so a reload continues at the same step.
+// The Architect chat as a step machine: 8 fixed questions, a short reaction
+// after each, then one "Show me my report" button. The whole state is saved
+// after every step, so a reload continues at the same step.
+//
+// Earlier version 2 diagnostics also had two Yes / No taps (and a reaction
+// numbered 9 after the first). Those saved taps are still read so old
+// diagnostics open, but nothing uses them any more and new ones never get any.
 //
 // Pure module: no prompts, no database. Used by the server and the browser.
 
 export const ANSWER_STEPS = 8;
-export const TOTAL_STEPS = 10;
+export const TOTAL_STEPS = ANSWER_STEPS;
 /** The halfway screen comes after the reaction to this answer. */
-export const HALFWAY_AFTER = 5;
+export const HALFWAY_AFTER = 4;
 export const MAX_ANSWER_CHARS = 3000;
-/** The reaction after the first tap has this step number. */
-export const TAP_REACTION_STEP = 9;
 
-/** How bold a reaction may be: gentle for answers 1 to 3, medium for 4 and 5, direct for 6 to 8 and the tap. */
+/** How bold a reaction may be: gentle for answers 1 to 3, medium for 4 and 5, direct for 6 to 8. */
 export type Boldness = "gentle" | "medium" | "direct";
 
 export function boldnessFor(step: number): Boldness {
@@ -20,7 +22,7 @@ export function boldnessFor(step: number): Boldness {
 }
 
 export interface Reaction {
-  /** 1 to 8 for answers, 9 for the first tap. */
+  /** 1 to 8 for answers (9 was the first tap's reaction in older diagnostics). */
   step: number;
   text: string;
   crisis: boolean;
@@ -41,6 +43,7 @@ export interface Reaction {
 
 export interface Flow {
   answers: string[];
+  /** Only in older diagnostics; always empty now. */
   taps: boolean[];
   reactions: Reaction[];
   halfwaySeen: boolean;
@@ -50,7 +53,6 @@ export type Screen =
   | { kind: "question"; step: number }
   | { kind: "reaction"; step: number }
   | { kind: "halfway" }
-  | { kind: "tap"; step: number }
   | { kind: "done" };
 
 export function emptyFlow(): Flow {
@@ -74,28 +76,23 @@ export function reactionFor(f: Flow, step: number): Reaction | undefined {
   return f.reactions.find((r) => r.step === step);
 }
 
-/** The steps that should have a reaction by now. */
-function reactionSteps(f: Flow): number[] {
-  const steps = f.answers.map((_, i) => i + 1);
-  if (f.taps.length >= 1) steps.push(TAP_REACTION_STEP);
-  return steps;
-}
-
-/** What the person should see now. */
+/**
+ * What the person should see now. "done" comes after the reaction to answer
+ * 8: the "Show me my report" button, or the report once it has started.
+ */
 export function currentScreen(f: Flow): Screen {
-  const missing = reactionSteps(f).find((s) => !reactionFor(f, s));
+  const missing = f.answers.map((_, i) => i + 1).find((s) => !reactionFor(f, s));
   if (missing !== undefined) return { kind: "reaction", step: missing };
   if (f.answers.length < ANSWER_STEPS) {
     if (f.answers.length === HALFWAY_AFTER && !f.halfwaySeen) return { kind: "halfway" };
     return { kind: "question", step: f.answers.length + 1 };
   }
-  if (f.taps.length < 2) return { kind: "tap", step: ANSWER_STEPS + 1 + f.taps.length };
   return { kind: "done" };
 }
 
-/** Completed steps out of 10, as a percentage: about 10% per step. */
+/** Answered questions out of 8, as a percentage: 12.5% per step, 100% when the report can start. */
 export function progressPercent(f: Flow): number {
-  return Math.round(((f.answers.length + f.taps.length) / TOTAL_STEPS) * 100);
+  return Math.round((f.answers.length / TOTAL_STEPS) * 100);
 }
 
 /** Checks an answer before it is saved; returns an error message or null. */
@@ -109,16 +106,6 @@ export function answerError(f: Flow, step: number, text: string): string | null 
 
 export function withAnswer(f: Flow, text: string): Flow {
   return { ...f, answers: [...f.answers, text.trim()] };
-}
-
-export function tapError(f: Flow, step: number): string | null {
-  const screen = currentScreen(f);
-  if (screen.kind !== "tap" || screen.step !== step) return "This question was already answered. Please reload.";
-  return null;
-}
-
-export function withTap(f: Flow, value: boolean): Flow {
-  return { ...f, taps: [...f.taps, value] };
 }
 
 export function withReaction(f: Flow, r: Reaction): Flow {
@@ -142,10 +129,10 @@ export type Bubble =
 
 /**
  * The chat as the person sees it: each question, their answer, and the
- * reaction that leads into the next question. The current question (or tap)
- * is last when one is waiting.
+ * reaction that leads into the next question. The current question is last
+ * when one is waiting. Old taps are not shown.
  */
-export function transcript(f: Flow, questions: string[], tapQuestions: string[], hints: string[] = []): Bubble[] {
+export function transcript(f: Flow, questions: string[], hints: string[] = []): Bubble[] {
   const out: Bubble[] = [];
   const react = (step: number) => {
     const r = reactionFor(f, step);
@@ -162,14 +149,6 @@ export function transcript(f: Flow, questions: string[], tapQuestions: string[],
     react(step);
     if (step === HALFWAY_AFTER && f.halfwaySeen) out.push({ kind: "halfway" });
     if (step === HALFWAY_AFTER && !f.halfwaySeen) return out;
-  }
-  for (let t = 0; t < 2; t++) {
-    if (t >= f.taps.length) {
-      if (screen.kind === "tap") out.push({ kind: "question", text: tapQuestions[t] });
-      return out;
-    }
-    out.push({ kind: "question", text: tapQuestions[t] }, { kind: "answer", text: f.taps[t] ? "Yes" : "No" });
-    if (t === 0) react(TAP_REACTION_STEP);
   }
   return out;
 }

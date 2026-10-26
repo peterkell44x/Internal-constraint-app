@@ -22,7 +22,6 @@ interface Props {
   questions: string[];
   /** The grey hint under each question; shown only, never sent to the AI. */
   hints: string[];
-  tapQuestions: string[];
   sectionNames: string[];
   text: typeof UI_TEXT;
 }
@@ -40,11 +39,11 @@ async function post(url: string, body?: unknown): Promise<DiagnosticView> {
 
 /**
  * The Architect diagnosis: 8 fixed questions, a short reaction after each,
- * a halfway screen after the fifth, two Yes / No taps, then the report.
+ * a halfway screen after the fourth, then a "Show me my report" button.
  * Everything is saved on the server after each step, so a reload picks up at
  * the same step.
  */
-export default function ArchitectSession({ initial, subtitle, questions, hints, tapQuestions, sectionNames, text }: Props) {
+export default function ArchitectSession({ initial, subtitle, questions, hints, sectionNames, text }: Props) {
   const router = useRouter();
   const [view, setView] = useState(initial);
   const [input, setInput] = useState("");
@@ -79,7 +78,7 @@ export default function ArchitectSession({ initial, subtitle, questions, hints, 
       .catch((e: Error) => setError(e.message));
   }, [screen, busy, base]);
 
-  // After the last tap the report is built on the server. If the page was
+  // After the button the report is built on the server. If the page was
   // reloaded before it started, start it.
   useEffect(() => {
     if (view.status !== "ready" || view.reportError || screen.kind !== "done") return;
@@ -134,9 +133,9 @@ export default function ArchitectSession({ initial, subtitle, questions, hints, 
     void act(val, base + "/answer", { step: screen.step, text: val }, () => setInput(val));
   }
 
-  function tap(value: boolean) {
-    if (screen.kind !== "tap") return;
-    void act(value ? text.yes : text.no, base + "/tap", { step: screen.step, value });
+  function showReport() {
+    requested.current = "report";
+    void act(null, base + "/report");
   }
 
   function retryReport() {
@@ -153,10 +152,10 @@ export default function ArchitectSession({ initial, subtitle, questions, hints, 
     );
   }
 
-  const bubbles = transcript(flow, questions, tapQuestions, hints);
+  const bubbles = transcript(flow, questions, hints);
   const elapsedMs = view.reportStartedAt ? Math.max(0, now - Date.parse(view.reportStartedAt)) : 0;
   const elapsed = Math.floor(elapsedMs / 60000) + ":" + String(Math.floor(elapsedMs / 1000) % 60).padStart(2, "0");
-  const stepNumber = Math.min(TOTAL_STEPS, flow.answers.length + flow.taps.length + (screen.kind === "done" ? 0 : 1));
+  const stepNumber = Math.min(TOTAL_STEPS, flow.answers.length + 1);
 
   return (
     <>
@@ -214,14 +213,13 @@ export default function ArchitectSession({ initial, subtitle, questions, hints, 
         </div>
       )}
 
-      {screen.kind === "tap" && (
-        <div className="tap-row">
-          <button className="primary" onClick={() => tap(true)} disabled={busy}>{text.yes}</button>
-          <button onClick={() => tap(false)} disabled={busy}>{text.no}</button>
+      {screen.kind === "done" && view.status === "in_progress" && (
+        <div className="halfway-card">
+          <button className="primary" onClick={showReport} disabled={busy}>{text.showReport}</button>
         </div>
       )}
 
-      {screen.kind === "done" && !completed && (
+      {screen.kind === "done" && !completed && view.status !== "in_progress" && (
         <div className="building-panel" role="status">
           {view.status === "ready" && view.reportError ? (
             <>

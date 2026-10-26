@@ -27,8 +27,8 @@ function summary(d: { version: number; constraint: string | null; reportJson: un
 function progressLine(d: { version: number; userTurns: number; flow: unknown }): string {
   if (d.version !== 2) return d.userTurns + " answer" + (d.userTurns === 1 ? "" : "s") + " so far. Pick up where you left off.";
   const f = parseFlow(d.flow);
-  const done = f.answers.length + f.taps.length;
-  return "Step " + Math.min(TOTAL_STEPS, done + 1) + " of " + TOTAL_STEPS + (f.answers.length < ANSWER_STEPS ? "" : ", almost there") + ". Pick up where you left off.";
+  if (f.answers.length >= ANSWER_STEPS) return "All " + TOTAL_STEPS + " questions answered. Open it to start your report.";
+  return "Step " + (f.answers.length + 1) + " of " + TOTAL_STEPS + ". Pick up where you left off.";
 }
 
 export default async function DashboardPage() {

@@ -4,7 +4,7 @@
 // check succeeded. Rendered only for accounts in REPORT_DEBUG_EMAILS.
 
 import type { ArchitectChecks } from "@/lib/diagnostic/v2/engine";
-import type { Flow } from "@/lib/diagnostic/v2/flow";
+import { ANSWER_STEPS, type Flow } from "@/lib/diagnostic/v2/flow";
 
 interface Props {
   flow: Flow;
@@ -23,9 +23,9 @@ export default function ArchitectInternals({ flow, checks, original }: Props) {
         <p className="muted small">None yet.</p>
       ) : (
         <ul className="internals-list">
-          {[...flow.reactions].sort((a, b) => a.step - b.step).map((r) => (
+          {flow.reactions.filter((r) => r.step <= ANSWER_STEPS).sort((a, b) => a.step - b.step).map((r) => (
             <li key={r.step}>
-              <strong>{r.step === 9 ? "After the first tap" : "Answer " + r.step}</strong>
+              <strong>{"Answer " + r.step}</strong>
               {r.fallback && <span className="pill">AI failed twice, fallback line shown</span>}
               {r.crisis && <span className="pill">crisis</span>}
               {r.thin && <span className="pill">THIN_ANSWER</span>}
@@ -53,11 +53,55 @@ export default function ArchitectInternals({ flow, checks, original }: Props) {
           </p>
           {(c.reportProblems ?? []).length > 0 && <p className="muted small">Report retries: {c.reportProblems!.join("; ")}</p>}
 
+          <h3>Constraint sentence</h3>
+          <p className="small">
+            {c.constraint?.text ? <>&ldquo;{c.constraint.text}&rdquo;</> : "None."}
+          </p>
+          <p className="muted small">
+            Source: {c.constraintSource === "regenerated" ? "missing from the report, written by a second call" : c.constraintSource === "missing" ? "missing from the report and the second call, shipped without it" : c.constraintSource === "report" ? "the report" : "n/a"}
+            {c.constraint ? " · status: " + c.constraint.status : ""}
+            {c.constraint?.note ? " (" + c.constraint.note + ")" : ""}
+          </p>
+          {c.constraint?.replaced && <p className="muted small">Section point it replaced: &ldquo;{c.constraint.replaced}&rdquo;</p>}
+
           <h3>AI fact check</h3>
           {c.aiCheck?.status === "ok" ? (
             <p className="small">Succeeded ({c.aiCheck.attempts} attempt{c.aiCheck.attempts === 1 ? "" : "s"}), {c.aiCheck.flagged} sentence(s) flagged.</p>
           ) : (
             <p className="small"><strong>AI check failed</strong> after {c.aiCheck?.attempts ?? 0} attempts ({c.aiCheck?.error ?? "no reply"}). The report shipped with the code checks only.</p>
+          )}
+
+          {(c.ignored ?? []).length > 0 && (
+            <>
+              <h4>AI check entries ignored (the reason said to keep the sentence)</h4>
+              <ul className="internals-list">
+                {c.ignored!.map((g, i) => (
+                  <li key={i}>
+                    {g.card}: &ldquo;{g.sentence}&rdquo;
+                    <div className="muted small">{g.reason}</div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {(c.dangling ?? []).length > 0 && (
+            <>
+              <h4>Card checks after deletions</h4>
+              <ul className="internals-list">
+                {c.dangling!.map((g, i) => (
+                  <li key={i}>
+                    {g.card}: {g.status === "ok" ? g.flagged + " sentence(s) flagged" : "failed (" + (g.error ?? "no reply") + "), card kept as it was"}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {c.shortCheck && (
+            <p className="small">
+              AI check on cards rewritten for being short: {c.shortCheck.status === "ok" ? c.shortCheck.flagged + " sentence(s) flagged" : "failed (" + (c.shortCheck.error ?? "no reply") + ")"}
+            </p>
           )}
 
           <h3>Code checks that fired</h3>
