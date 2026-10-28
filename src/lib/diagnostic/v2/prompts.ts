@@ -87,7 +87,7 @@ const HINTS_BASE: string[] = [
   "Something you lived or something you watched. Who was there, what happened, how it felt.",
   "Think about what you actually do, even if it's not what you wish you did.",
   "",
-  "Think about how they talk, how they walk into a room, and how they handle a bad day.",
+  "Think about how they talk, how they walk into a room, and how they handle a bad day. Also their beliefs, expectations, feelings, reactions, what they pay attention to, and what they think about. Then begin to embody that now.",
 ];
 
 /** The domain's own hints for question 1 and question 7; the rest are shared. */
@@ -137,8 +137,6 @@ export const NEUTRAL_LINES: string[] = [
 ];
 
 export const UI_TEXT = {
-  halfway: "You're halfway there. I'm already seeing a pattern in what you've told me.",
-  halfwayButton: "Continue",
   supportLine: "If you are in danger or thinking about hurting yourself, please call or text 988 (US and Canada), or your local emergency number.",
   building: "Building your report",
   buildingDetail: "This usually takes about a minute. You can leave this page and come back.",
@@ -202,6 +200,7 @@ Hard rules:
 - Never state as fact anything about their looks, body, health, intelligence or worth.
 - Never write: "what you actually want", "what you really want", "what you're really", "the real goal", "the realest", "tells you something", "that tells me", "makes a certain kind of sense", "taught you that", "runs your", "it runs you", "the word", "you called it", "same word", "if there is one".
 - Do not ask a question. Do not give advice or tasks.
+- Avoid idioms and stock phrases (for example "pulling the floor out", "at the end of the day", "the weight of the world"). A fresh, specific metaphor of your own is good and welcome (for example "a delay became a verdict").
 - No diagnoses. No medical claims. Never say thoughts, stress or fear cause an illness, an injury, or a physical condition.
 - Do not praise or encourage something harmful (self-harm, starving, cutting everyone off, revenge). Describe it neutrally.
 - No em dashes or en dashes; use a period or a comma. Never use the words "chase" or "chasing".
@@ -287,6 +286,10 @@ export const CODE_BANNED_PHRASES: string[] = [
   "pulling the floor out",
   "pull the floor out",
   "pulls the floor out",
+  // Filler
+  "that is not a small thing",
+  "that is no small thing",
+  "not a small thing",
 ];
 
 /**
@@ -362,12 +365,15 @@ The idea: every goal has a conscious meaning (what the person says they want and
 
 You will get: the domain, all 8 answers, THIN ANSWERS (answers under ${THIN_ANSWER_WORDS} words), and a SENSITIVE flag.
 
-STEP 1: write hidden_tie (one sentence, shape below). It must be about meaning, different from the problem as the person stated it, and every fact in it must come from their answers. It must not contradict anything they said (for example, if they said they lock back in and get disciplined, do not say they lose their grip).
+STEP 1: write belief FIRST: the old belief in one plain phrase, under 20 words. It is the phrase that completes "Your internal constraint is the belief that ...". The belief must be in plain words the person could say themselves. It must explain how they react when things go wrong (their answer 6), and it must block the goal they named (their answer 7). Do not use abstract words the person never used for the belief (for example "worth", "power", "edge", "capacity") unless those are their words.
+
+STEP 2: write hidden_tie (one sentence, shape below). It must be about meaning, different from the problem as the person stated it, and every fact in it must come from their answers. It must not contradict anything they said (for example, if they said they lock back in and get disciplined, do not say they lose their grip).
 "You say you want [goal]. But underneath, part of you has tied [goal] to [meaning], because [what they heard, saw or lived]. So when [situation], you [what they do], and that looks like [their stated problem]."
+You may INTERPRET what an experience taught them, but never add events, details or inner feelings they did not give. Interpret meaning, never invent events. If no childhood or home detail supports the origin, tie the belief to the event they DID describe instead.
 
-STEP 2: write constraint, ONE sentence in exactly this shape: "Your internal constraint is the belief that [the old belief], and it is what stands between you and [their goal from answer 7]." It must agree with hidden_tie and follow every rule below.
+STEP 3: write constraint, ONE sentence in exactly this shape: "Your internal constraint is the belief that [belief, word for word], and it is what stands between you and [their goal from answer 7]." It must use belief word for word, agree with hidden_tie and follow every rule below.
 
-STEP 3: write the cards below. Every card must serve the hidden_tie, but never print the hidden_tie as a label.
+STEP 4: write the cards below. Every card must serve the hidden_tie, but never print the hidden_tie as a label.
 
 RULES
 - Assume boldly about MEANING (what things say about how they see themselves, the goal, the pattern). NEVER invent facts: no events, people, places, ages, numbers, dates, quotes or actions that are not in their answers. If they gave a number, use it exactly. When you write "you said", it must be something they actually said.
@@ -380,6 +386,8 @@ RULES
 - Hedging: one soft word (may, could, seems, part of you) is allowed per card in "${s2}", in the key insight card of "${s4}", and anywhere a claim rests on a thin answer. Claims that rest on THIN ANSWERS must be softer and smaller. "Likely" is allowed in the forecast. Everything else is stated plainly.
 - Each card has a different job and draws on different answers. Do not retell the same idea in the same words. Never repeat a phrase of 5 or more words inside one card.
 - Plain, simple English. Sentences of 20 words or fewer. One idea per sentence. Each card 55 to 95 words. Whole report 800 to 1100 words. Speak to "you". No metaphors that need decoding. No flourishes that sound deep but say nothing.
+- Avoid idioms and stock phrases (for example "pulling the floor out", "at the end of the day", "the weight of the world"). A fresh, specific metaphor of your own is good and welcome (for example "a delay became a verdict").
+- Use the belief's exact words in only two places: the constraint sentence and "${s4}" card 2 (the "Your block isn't ... It's the belief that ..." card). They may also appear once in the "Stop letting ..." sentence of "${s4}" card 3. Everywhere else ("${s1}", "${s2}" cards 1 and 2, "${s3}") refer to it as "that belief" or "that pattern", or describe it differently, but never reword it as a competing version of the belief.
 - No time shifts: keep every time reference exactly as they said it. If they said "until the next morning", do not write "that morning".
 - No feelings, states or timings they did not state. Keep their words: "didn't care" must not become "wasn't scared", and never write the opposite of what they said. A phrase like "the old fear" may only refer back to something already named in the same card. Do not write "at the same time", "simultaneously" or "at once"; describe things in the order they gave them.
 - Do not turn positives into problems. Something they say is going well is mirrored as going well. Never invent a gap, and never write "if there is one".
@@ -388,7 +396,7 @@ RULES
 - No invented durations or frequencies. Write "for years", "years of", "always", "every time", "all your life" or "constantly" only if the person used that wording. One set of friends who stopped texting is not "years of pulling back".
 - Never tell them what they "really" or "actually" want. Never write: ${PROMPT_BANNED_PHRASES.map((w) => '"' + w + '"').join(", ")}.
 - Do not comment on how they wrote their answers (never "you used that word", "the word X", "same word", "you called it").
-- No task, instruction or advice anywhere, in any card or bullet. The ONE exception is the single direction line in "${s4}" card 3 (shape below), which describes a new way of seeing and acting and is not a task. Never write "pause before", "ask yourself", "get curious", "notice when", "remind yourself", "this week", or steps or dates, and never tell them to "try to", "start doing", "remember to" or "make sure".
+- No task, instruction or advice anywhere, in any card or bullet. The ONE exception is the two direction sentences in "${s4}" card 3 (shape below), which describe a new way of seeing and acting and are not a task. Never write "pause before", "ask yourself", "get curious", "notice when", "remind yourself", "this week", or steps or dates, and never tell them to "try to", "start doing", "remember to" or "make sure".
 - Do not praise or encourage anything harmful.
 - No em dashes or en dashes anywhere; use a period or a comma.
 - Never use the words "chase" or "chasing"; say building toward, working toward, or going after.
@@ -402,11 +410,11 @@ CARDS (3 per section; the last card of each section ends with ONE plain sentence
 (4) "${s4}": do NOT retell the origin story here (parents, childhood, their first model of the goal); the first two sections already covered it.
 Card 1, forecast: "If nothing shifts, ..." 3 to 4 short plain sentences, about 45 to 70 words. Each sentence is a concrete picture of their situation six months from now, built ONLY from facts the person gave, using "likely", with no new events and no invented durations. No "not because X but because Y". No abstract reasoning.
 Card 2, key insight and new belief: say once, in one short sentence, "Your block isn't [what they think the problem is]. It's [the old belief]." Then say what will happen at the moment they try (the resistance they will feel, in their situation). Then state the NEW belief in one plain sentence: the direct opposite of the old belief, tied to something they do now and to one of their goals from answer 7.
-Card 3, proof and the new way: their own words from answer 8 back to them; one or two specific facts from their own life that show the new belief is possible; then ONE line in this shape: stop letting [the old belief] decide, and act as if [the new belief] is already true, even before you feel ready. Then the section point, then end with exactly this line, once: "${DESIGN_CLOSING}" That one line is the only direction in the report. No steps, no dates, no "this week".
+Card 3, proof and the new way: their own words from answer 8 back to them; one or two specific facts from their own life that show the new belief is possible; then two short sentences in this shape: "Stop letting [the belief] decide what you do today." and "Act as if [the new belief], even before you feel ready." Each sentence is under 25 words, and the new belief is a short plain phrase of about 12 words or fewer. Then the section point, then end with exactly this line, once: "${DESIGN_CLOSING}" Those two sentences are the only direction in the report. No steps, no dates, no "this week".
 Final screen: 3 bullets for "${UI_TEXT.oldPattern}" and 3 for "${UI_TEXT.newPattern}", each at most 9 words. They are short phrases about how they act or how they see things, built from their own facts (shape: "Treating setbacks as interruptions, not proof against you"). Never tasks, instructions or advice.
 
 Return only JSON:
-{"hidden_tie": "...", "constraint": "...", "sections": [{"name":"${s1}","cards":["","",""]}, {"name":"${s2}","cards":["","",""]}, {"name":"${s3}","cards":["","",""]}, {"name":"${s4}","cards":["","",""]}], "old_bullets":["","",""], "new_bullets":["","",""]}`;
+{"belief": "...", "hidden_tie": "...", "constraint": "...", "sections": [{"name":"${s1}","cards":["","",""]}, {"name":"${s2}","cards":["","",""]}, {"name":"${s3}","cards":["","",""]}, {"name":"${s4}","cards":["","",""]}], "old_bullets":["","",""], "new_bullets":["","",""]}`;
 }
 
 /** What each card is for, used when one card is rewritten on its own. */
@@ -429,13 +437,13 @@ export const CARD_ROLES: string[][] = [
   [
     "\"If nothing shifts, ...\" forecast: 3 to 4 short plain sentences, about 45 to 70 words, each a concrete picture of their situation six months from now, built ONLY from facts the person gave, using \"likely\", no new events, no invented durations, no \"not because X but because Y\", no abstract reasoning. Do not retell the origin story. If SENSITIVE is true, instead a gentle card about what they have been carrying.",
     "Key insight and new belief: once, in one short sentence, \"Your block isn't [what they think the problem is]. It's [the old belief].\" Then what will happen at the moment they try (the resistance they will feel, in their situation). Then the NEW belief in one plain sentence: the direct opposite of the old one, tied to something they do now and to one of their goals from answer 7. Do not retell the origin story. One soft word allowed.",
-    "Proof and the new way: their own words from answer 8; one or two specific facts from their own life that show the new belief is possible; then ONE line shaped: stop letting [the old belief] decide, and act as if [the new belief] is already true, even before you feel ready; then one plain sentence stating the point of the section, then exactly: \"" + DESIGN_CLOSING + "\" Do not retell the origin story. No steps, no dates, no \"this week\".",
+    "Proof and the new way: their own words from answer 8; one or two specific facts from their own life that show the new belief is possible; then two short sentences shaped \"Stop letting [the belief] decide what you do today.\" and \"Act as if [the new belief], even before you feel ready.\" (each under 25 words, the new belief a short plain phrase of about 12 words or fewer); then one plain sentence stating the point of the section, then exactly: \"" + DESIGN_CLOSING + "\" Do not retell the origin story. No steps, no dates, no \"this week\".",
   ],
 ];
 
 export const CARD_REGEN_SYSTEM = `You are rewriting ONE card of a personal Architect report. You get the person's answers, the hidden tie the report is built on, what this card is for, the other cards (do not repeat them), the current card, and what to fix.
 
-Rules: plain simple English, sentences of 20 words or fewer, 55 to 95 words, speak to "you". Use at least 2 concrete details from their answers if they exist. Assume boldly about meaning, but never invent facts: no events, people, places, ages, numbers, dates, quotes or actions that are not in their answers. Never contradict or downplay what they said, and never deny a goal they stated. Do not state what other people believed or meant more strongly than the person said. Never state as fact anything about their looks, body, health, intelligence or worth. Do not repeat sentences or phrases from the other cards, and never repeat a phrase of 5 or more words inside this card. No medical claims. No task, instruction or advice of any kind: never "pause before", "ask yourself", "get curious", "notice when", "remind yourself", "this week", and never tell them to "try to", "start doing", "remember to" or "make sure". The only exception is the single line in Life by design card 3 shaped "stop letting [the old belief] decide, and act as if [the new belief] is already true, even before you feel ready", which you keep if this is that card. In Life by design, do not retell the origin story (parents, childhood). No invented durations or frequencies ("for years", "years of", "always", "every time", "all your life", "constantly") unless the person used that wording. Never tell them what they "really" or "actually" want. Never comment on the words they used. Never print the hidden tie as a label. No feelings, states or timings they did not state ("didn't care" never becomes "wasn't scared"); "the old fear" only refers back to something named in this card; never "at the same time", "simultaneously" or "at once", keep the order they gave. Do not turn positives into problems, never invent a gap, never "if there is one". The last sentence names the specific thing in plain words, never an aphorism. No em dashes or en dashes. Never use "chase" or "chasing". Do not use this wording: ${BANNED_WORDING.map((w) => '"' + w + '"').join(", ")}.
+Rules: plain simple English, sentences of 20 words or fewer, 55 to 95 words, speak to "you". Use at least 2 concrete details from their answers if they exist. Assume boldly about meaning, but never invent facts: no events, people, places, ages, numbers, dates, quotes or actions that are not in their answers. Never contradict or downplay what they said, and never deny a goal they stated. Do not state what other people believed or meant more strongly than the person said. Never state as fact anything about their looks, body, health, intelligence or worth. Do not repeat sentences or phrases from the other cards, and never repeat a phrase of 5 or more words inside this card. No medical claims. No task, instruction or advice of any kind: never "pause before", "ask yourself", "get curious", "notice when", "remind yourself", "this week", and never tell them to "try to", "start doing", "remember to" or "make sure". The only exception is the two sentences in Life by design card 3 shaped "Stop letting [the belief] decide what you do today." and "Act as if [the new belief], even before you feel ready.", which you keep if this is that card. In Life by design, do not retell the origin story (parents, childhood). No invented durations or frequencies ("for years", "years of", "always", "every time", "all your life", "constantly") unless the person used that wording. Never tell them what they "really" or "actually" want. Never comment on the words they used. Never print the hidden tie as a label. No feelings, states or timings they did not state ("didn't care" never becomes "wasn't scared"); "the old fear" only refers back to something named in this card; never "at the same time", "simultaneously" or "at once", keep the order they gave. Do not turn positives into problems, never invent a gap, never "if there is one". The last sentence names the specific thing in plain words, never an aphorism. No em dashes or en dashes. Never use "chase" or "chasing". Do not use this wording: ${BANNED_WORDING.map((w) => '"' + w + '"').join(", ")}.
 
 Return only JSON: {"card": "..."}`;
 
@@ -446,11 +454,11 @@ export const CARD_FIX = {
   banned: "Do not use the banned wording listed.",
   action: "Remove the advice or instruction. This card gives no task, instruction or advice of any kind.",
   dash: "Replace every em dash or en dash with a period or a comma.",
-  repeated: "Do not repeat sentences or phrases that already appear in the other cards. Say something new.",
+  repeated: "Remove or rephrase the sentences that repeat other cards. Use only facts from the person's answers. Do not add any new claim. The card may come out shorter.",
   repeatedWithin: "Do not repeat a phrase of 5 or more words inside this card.",
-  short: "The card is too short. Write it again from their answers, 55 to 95 words.",
+  short: "Write it again using only facts from the person's answers that this card has not used yet. Do not add any new claim. If there are no unused facts left, a shorter card is fine.",
   timing: "Remove the timing or reference back the person never gave (at the same time, simultaneously, at once, the old fear). Describe things in the order they gave. Change as few words as possible.",
-  afterDeletions: "This card lost sentences in the checks and is now too short. Write it again from their answers, 55 to 95 words, without repeating what was deleted or why it was deleted:",
+  afterDeletions: "Write it again using only facts from the person's answers that this card has not used yet. Do not add any new claim. If there are no unused facts left, a shorter card is fine. Do not bring back these deleted sentences or the reason they were deleted:",
   duration: "Remove the duration or frequency the person never gave (for years, years of, always, every time, all your life, constantly). Change as few words as possible.",
 };
 
@@ -460,7 +468,7 @@ export const CARD_FIX = {
 export const FACT_CHECK_SYSTEM = `You check a personal report against the answers the person gave. You get their answers and the report as numbered sentences, each with the section it is in. Nothing you write is shown to the person.
 
 Flag a sentence ONLY if it does one of these:
-1. invents an event, person, place, age, number, date, quote, or something the person did, that is not in their answers;
+1. invents an event, person, place, age, number, date, quote, or something the person did, that is not in their answers. This includes claims about who the person IS or the identity they built ("you are the one who always...", "the identity you built around ..."), and facts about their current situation or circumstances that are not in their answers (for example a comparison between two things in their life that they did not make);
 2. says "you said", "you told me" or "you mentioned" about something they did not say;
 3. makes a NEW medical or health claim the person did not make themselves (repeating their own claim as "you said" is fine);
 4. states a made-up cause as fact (for example "you got injured because you pushed too hard" when they never said why). A cause offered as a read of the pattern with a soft word is allowed;
@@ -473,13 +481,15 @@ Flag a sentence ONLY if it does one of these:
 11. states a feeling or state they never stated, including the opposite of what they said (for example "you weren't scared" when they said they "didn't care");
 12. refers back to something never named before it (for example "the old fear" when no fear was named);
 13. gives a timing or order they never gave ("at the same time", "right away", "immediately", "years", when they gave no such timing or a different order);
-14. is an abstract aphorism with no concrete claim about the person (for example "That is where the real pattern lives."): delete it.
+14. is an abstract aphorism with no concrete claim about the person (for example "That is where the real pattern lives."): delete it;
+15. says something matters, was meant, or was not random or accidental, without giving the specific reason from the person's own answers (for example "That gap between you and your parents was not accidental."): DELETE it. A sentence that does give the reason stays;
+16. uses a stock idiom or cliche (for example "pulling the floor out", "at the end of the day", "the weight of the world"): EDIT it by removing the idiom's words so the plain meaning is left, never DELETE. If the idiom cannot be removed cleanly, leave the sentence alone. A fresh, specific metaphor (for example "a delay became a verdict") must never be flagged.
 
-Do NOT flag interpretations of meaning, motives, feelings, patterns, or the hidden belief. Those are the point of the report.
+Do NOT flag interpretations of meaning, motives, feelings, patterns, or the hidden belief. Those are the point of the report. A sentence framed as a reading ("underneath", "it looks like", "the belief running underneath") is not an invented claim. Only flag a sentence that states a fact, an identity or a circumstance as true with no support in the answers.
 
 Only return an entry if you intend to delete or edit that sentence. Never return an entry to say a sentence is fine. For each entry set "verdict":
-- "EDIT": only if removing some words fixes it. "edit" must be the same sentence with words removed and nothing added, reordered or reworded.
-- "DELETE": otherwise ("edit" is "").
+- "EDIT": whenever the unsupported part is one clause that can be cut without breaking the sentence, return EDIT with the sentence minus that clause. For example "This costs you now because business progress is slower and less visible than school progress, and every day that does not feel like grade 12 reads as a failure" becomes "This costs you now because every day that does not feel like grade 12 reads as a failure". "edit" must be the same sentence with words removed and nothing added, reordered or reworded.
+- "DELETE": only when the whole sentence is the unsupported claim ("edit" is "").
 If deleting or editing a sentence leaves the sentence after it dangling (it points back at what was removed, for example "That same follow-through is in you."), flag that one too.
 
 The reason is one short line stating the decision, for example "Invents an age they never gave." No "however", no second thoughts.

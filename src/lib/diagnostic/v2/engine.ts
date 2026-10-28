@@ -36,9 +36,10 @@ import {
   parseFactCheck,
   parseReport,
   REACTION_SCHEMA,
+  reportShapeError,
   REPORT_SCHEMA,
 } from "./schema";
-import { countWords, normalize } from "./text";
+import { beliefFromConstraint, countWords, normalize } from "./text";
 
 // The same model the app has always used, overridable with ANTHROPIC_MODEL.
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
@@ -90,6 +91,8 @@ export interface ArchitectChecks extends CheckDebug {
   reportProblems: string[];
   /** Where the constraint sentence came from: the report, a second call, or nowhere. */
   constraintSource: "report" | "regenerated" | "missing";
+  /** Where the belief came from: the reply's own field, the constraint sentence, or nowhere. */
+  beliefSource?: "report" | "constraint" | "none";
   ms: number;
 }
 
@@ -117,8 +120,9 @@ export async function generateArchitectReport(
   for (let attempt = 1; attempt <= 2 && !original; attempt++) {
     attempts = attempt;
     try {
-      original = parseReport(await callJSON(system, input, REPORT_SCHEMA, 8000), SECTION_NAMES);
-      if (!original) problems.push("attempt " + attempt + ": reply did not match the report shape");
+      const reply = await callJSON(system, input, REPORT_SCHEMA, 8000);
+      original = parseReport(reply, SECTION_NAMES);
+      if (!original) problems.push("attempt " + attempt + ": reply did not match the report shape: " + reportShapeError(reply));
     } catch (e) {
       problems.push("attempt " + attempt + ": " + message(e));
     }
@@ -137,6 +141,14 @@ export async function generateArchitectReport(
     }
     constraintSource = constraintOk(again ?? undefined) ? "regenerated" : "missing";
     original = { ...original, constraint: constraintSource === "regenerated" ? again! : "" };
+  }
+
+  // The belief: optional in the reply. If missing, it is taken from the constraint.
+  let beliefSource: ArchitectChecks["beliefSource"] = "report";
+  if (!original.belief) {
+    const fromConstraint = beliefFromConstraint(original.constraint);
+    beliefSource = fromConstraint ? "constraint" : "none";
+    original = { ...original, belief: fromConstraint };
   }
 
   const answers = answersText(f);
@@ -174,6 +186,7 @@ export async function generateArchitectReport(
       reportAttempts: attempts,
       reportProblems: problems,
       constraintSource,
+      beliefSource,
       ms: Date.now() - started,
       ...debug,
     },

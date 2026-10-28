@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { DOMAIN_KEYS } from "../src/lib/diagnostic/domains.ts";
-import { checkArchitectReport, CONSTRAINT_REF, enforceClosings, isClosingLine, MIN_CARD_WORDS, type CheckDeps } from "../src/lib/diagnostic/v2/checks.ts";
+import {
+  checkArchitectReport,
+  CONSTRAINT_REF,
+  enforceClosings,
+  isClosingLine,
+  MIN_CARD_WORDS,
+  PROTECT_CARD_WORDS,
+  type CheckDeps,
+} from "../src/lib/diagnostic/v2/checks.ts";
 import {
   boldnessFor,
   currentScreen,
@@ -13,7 +21,6 @@ import {
   rendererFor,
   transcript,
   withAnswer,
-  withHalfwaySeen,
   withReaction,
   type Flow,
 } from "../src/lib/diagnostic/v2/flow.ts";
@@ -22,6 +29,7 @@ import {
   buildReportSystem,
   CARD_FIX,
   CARD_REGEN_SYSTEM,
+  CARD_ROLES,
   DEFAULT_CLOSING,
   DESIGN_CLOSING,
   FACT_CHECK_SYSTEM,
@@ -37,9 +45,19 @@ import {
   UI_TEXT,
 } from "../src/lib/diagnostic/v2/prompts.ts";
 import { cleanReaction, decideReaction } from "../src/lib/diagnostic/v2/reaction.ts";
-import { cleanReason, parseFactCheck, parseReaction, parseReport, type ArchitectReport, type FactFlag } from "../src/lib/diagnostic/v2/schema.ts";
+import {
+  cleanReason,
+  parseFactCheck,
+  parseReaction,
+  parseReport,
+  REPORT_SCHEMA,
+  reportShapeError,
+  type ArchitectReport,
+  type FactFlag,
+} from "../src/lib/diagnostic/v2/schema.ts";
 import {
   anchorInAnswers,
+  beliefFromConstraint,
   findNumbers,
   instructionsIn,
   isWordsRemovedOnly,
@@ -93,37 +111,36 @@ const react = (f: Flow, step: number, crisis = false): Flow => withReaction(f, {
 function answeredUpTo(n: number): Flow {
   let f = emptyFlow();
   for (let i = 1; i <= n; i++) {
-    if (i === 5) f = withHalfwaySeen(f);
     f = react(withAnswer(f, "Answer " + i), i);
   }
   return f;
 }
 
-test("8 steps: 8 questions, the halfway screen after answer 4, 12.5% each, then the report button", () => {
+test("8 steps: 8 questions, no halfway screen, 12.5% each, then the report button", () => {
   let f = emptyFlow();
   assert.deepEqual(currentScreen(f), { kind: "question", step: 1 });
   assert.equal(progressPercent(f), 0);
   for (let i = 1; i <= 8; i++) {
-    if (i === 5) {
-      assert.deepEqual(currentScreen(f), { kind: "halfway" });
-      f = withHalfwaySeen(f);
-    }
     assert.deepEqual(currentScreen(f), { kind: "question", step: i });
     f = withAnswer(f, "Answer " + i);
     assert.deepEqual(currentScreen(f), { kind: "reaction", step: i });
     assert.equal(progressPercent(f), Math.round(i * 12.5));
     f = react(f, i);
+    // After the reaction to answer 4 the chat goes straight to question 5.
+    if (i === 4) assert.deepEqual(currentScreen(f), { kind: "question", step: 5 });
   }
   // After the reaction to answer 8: no taps, just the button.
   assert.deepEqual(currentScreen(f), { kind: "done" });
   assert.equal(progressPercent(f), 100);
   assert.equal(UI_TEXT.showReport, "Show me my report");
   assert.ok(!("yes" in UI_TEXT) && !("no" in UI_TEXT));
-  // The halfway note sits after answer 4's reaction in the chat.
+  assert.ok(!("halfway" in UI_TEXT) && !("halfwayButton" in UI_TEXT));
   const bubbles = transcript(f, QUESTIONS.money);
-  const k = bubbles.findIndex((b) => b.kind === "halfway");
-  assert.deepEqual(bubbles[k - 1], { kind: "reaction", text: "Reaction 4.", crisis: false });
+  assert.equal(bubbles.length, 24, "8 questions, 8 answers, 8 reactions, nothing else");
   assert.equal(bubbles.at(-1)!.kind, "reaction", "the chat ends on the reaction to answer 8");
+  // A diagnostic saved mid-way with the old halfway flag continues at question 5.
+  const saved = parseFlow({ ...JSON.parse(JSON.stringify(answeredUpTo(4))), halfwaySeen: false });
+  assert.deepEqual(currentScreen(saved), { kind: "question", step: 5 });
 });
 
 test("an older diagnostic with tap data still opens: taps and the step 9 reaction are read but not used", () => {
@@ -325,7 +342,7 @@ test("em dashes: the card is rewritten once, then dashes are replaced with comma
   assert.ok(out.debug.fired.some((f) => f.includes("em dash replaced")));
 });
 
-test("a 5-word phrase used twice inside one card: rewritten once, then the later sentence is deleted", async () => {
+test("a 5-word phrase used twice inside one card: the later sentence is deleted first, with no rewrite", async () => {
   assert.deepEqual(
     repeatedWithinCard("It has run since you were small. And it has run since you were small, quietly."),
     ["And it has run since you were small, quietly."],
@@ -336,26 +353,26 @@ test("a 5-word phrase used twice inside one card: rewritten once, then the later
   assert.deepEqual(repeatedWithinCard(withClosing, DEFAULT_CLOSING), ["It is the way you move when you are tired."]);
   const { d, calls } = deps();
   const out = await checkArchitectReport(report({ 3: card(3) + " It has run since you were small. It has run since you were small, quietly." }), ANSWERS, d);
-  assert.deepEqual(calls.map((c) => c.fixes), [[CARD_FIX.repeatedWithin]]);
-  assert.ok(!out.report.sections[1].cards[0].includes("small, quietly"));
+  assert.deepEqual(calls, []);
+  assert.equal(out.report.sections[1].cards[0], card(3) + " It has run since you were small.");
 });
 
-test("no sentence twice and no 8-word phrase in two cards: the later card is fixed", async () => {
+test("no sentence twice and no 8-word phrase in two cards: the later copy is deleted", async () => {
   const shared = "You learned that money only ever arrives with a fight attached.";
   const { d, calls } = deps();
   const out = await checkArchitectReport(report({ 1: card(1) + " " + shared, 7: card(7) + " " + shared }), ANSWERS, d);
-  assert.deepEqual(calls.map((c) => [c.section, c.card, c.fixes]), [[2, 1, [CARD_FIX.repeated]]]);
+  assert.deepEqual(calls, [], "one repeated sentence is deleted, not rewritten");
   assert.ok(out.report.sections[0].cards[1].includes(shared));
   assert.ok(!out.report.sections[2].cards[1].includes(shared));
 });
 
-test("a card under 40 words is rewritten once from the answers", async () => {
+test("a card under 25 words is rewritten once from the answers", async () => {
   const short = "You learned money was tense. You stayed quiet about it.";
   const { d, calls } = deps({ regenerate: async (s, c, fixes, current) => (fixes[0] === CARD_FIX.short ? card(22) : current.sections[s].cards[c]) });
   const out = await checkArchitectReport(report({ 3: short }), ANSWERS, d);
   assert.deepEqual(calls.map((c) => [c.section, c.card, c.fixes]), [[1, 0, [CARD_FIX.short]]]);
   assert.equal(out.report.sections[1].cards[0], card(22));
-  assert.equal(MIN_CARD_WORDS, 40);
+  assert.equal(MIN_CARD_WORDS, 25);
 });
 
 // ---------------------------------------------------------------------------
@@ -386,7 +403,8 @@ test("the AI check edits a sentence by removing words, deletes when the edit add
       return flags;
     },
   });
-  const out = await checkArchitectReport(report(), ANSWERS, d);
+  // Card 5 gets a sixth sentence, so losing two still leaves 40 words or more.
+  const out = await checkArchitectReport(report({ 5: card(5) + " " + card(23).split(". ")[0] + "." }), ANSWERS, d);
   assert.ok(out.report.sections[1].cards[1].includes(editTo));
   assert.ok(!out.report.sections[1].cards[1].includes(target));
   assert.ok(!out.report.sections[1].cards[2].includes(changed));
@@ -460,7 +478,7 @@ test("sentencesOf keeps every sentence of a card", () => {
 
 test("Q8 hints in all four domains no longer say it's fine to give less", () => {
   for (const d of DOMAIN_KEYS) {
-    assert.equal(QUESTION_HINTS[d][7], "Think about how they talk, how they walk into a room, and how they handle a bad day.", d);
+    assert.ok(QUESTION_HINTS[d][7].startsWith("Think about how they talk, how they walk into a room, and how they handle a bad day."), d);
     assert.ok(QUESTION_HINTS[d].every((h) => !/rough|a few words is fine/i.test(h)), d);
   }
 });
@@ -718,12 +736,12 @@ test("K.1: a rewrite of Uncovered card 3 keeps the constraint last", async () =>
   assert.equal(out.report.sections[1].cards[2], card(21) + " " + CONSTRAINT);
 });
 
-test("K.3: a card under 40 words after deletions is regenerated once, told what was deleted and why, then checked", async () => {
+test("K.3: a card under 25 words after deletions is regenerated once, told what was deleted and why, then checked", async () => {
   const short = "You learned money was tense. You stayed quiet about it. That is where the real pattern lives.";
   const rewrites: string[][] = [];
   let checked: string[] = [];
   let calls = 0;
-  const out = await checkArchitectReport(report({ 3: card(3).split(". ").slice(0, 2).join(". ") + ". " + short }), ANSWERS, {
+  const out = await checkArchitectReport(report({ 3: card(3).split(". ")[0] + ". " + short }), ANSWERS, {
     regenerate: async (_s, _c, fixes) => {
       rewrites.push(fixes);
       return card(22) + " You were 25 then.";
@@ -899,4 +917,259 @@ test("5b-1 F: teaser claims and the floor idiom delete the sentence", async () =
   assert.equal(calls.length, 0);
   assert.equal(out.report.sections[0].cards[0], card(0));
   assert.ok(out.report.sections[1].cards[0].endsWith("No accidents happened that year."));
+});
+
+// ---------------------------------------------------------------------------
+// Batch 5b-2
+
+const BELIEF = "money only comes with a fight when you need it most";
+const B_CONSTRAINT = "Your internal constraint is the belief that " + BELIEF + ", and it is what stands between you and 5k saved.";
+const B_SENTENCE = "It is the belief that " + BELIEF + ".";
+
+test("5b-2 A: a teaser-claim entry deletes the sentence; filler phrases are deleted by code; plain \"small\" is untouched", async () => {
+  assert.match(FACT_CHECK_SYSTEM, /says something matters, was meant, or was not random or accidental, without giving the specific reason/);
+  const teaser = "That gap between you and your parents was not random.";
+  const out = await checkArchitectReport(report({ 0: card(0) + " " + teaser }), ANSWERS, {
+    ...deps().d,
+    factCheck: async (numbered) => [flag(numbered.find((x) => x.text === teaser)!.n, "DELETE", "Claims it was meant, with no reason given.")],
+  });
+  assert.equal(out.report.sections[0].cards[0], card(0));
+  const lines = ["That is not a small thing.", "That is no small thing for you.", "Losing that job was not a small thing."];
+  const { d, calls } = deps();
+  const out2 = await checkArchitectReport(
+    report({ 1: card(1) + " " + lines[0], 2: card(2) + " " + lines[1], 4: card(4) + " " + lines[2], 7: card(7) + " You kept a small notebook of every bill." }),
+    ANSWERS,
+    d,
+  );
+  assert.equal(calls.length, 0);
+  assert.equal(out2.report.sections[0].cards[1], card(1));
+  assert.equal(out2.report.sections[0].cards[2], card(2));
+  assert.equal(out2.report.sections[1].cards[1], card(4));
+  assert.ok(out2.report.sections[2].cards[1].endsWith("You kept a small notebook of every bill."));
+});
+
+test("5b-2 B (plumbing only): an idiom EDIT entry is applied; code alone never flags an idiom", async () => {
+  assert.match(REACTION_SYSTEM, /Avoid idioms and stock phrases/);
+  assert.match(buildReportSystem(), /Avoid idioms and stock phrases/);
+  assert.match(FACT_CHECK_SYSTEM, /stock idiom or cliche[^\n]*EDIT it by removing the idiom's words[^\n]*never DELETE/);
+  const idiom = "At the end of the day you stop when money dips.";
+  const { d, calls } = deps();
+  const untouched = await checkArchitectReport(report({ 3: card(3) + " " + idiom }), ANSWERS, d);
+  assert.equal(calls.length, 0);
+  assert.ok(untouched.report.sections[1].cards[0].endsWith(idiom));
+  const out = await checkArchitectReport(report({ 3: card(3) + " " + idiom }), ANSWERS, {
+    ...deps().d,
+    factCheck: async (numbered) => [flag(numbered.find((x) => x.text === idiom)!.n, "EDIT", "Stock idiom.", "You stop when money dips.")],
+  });
+  assert.ok(out.report.sections[1].cards[0].endsWith("You stop when money dips."));
+});
+
+test("5b-2 C: an EDIT removes only the clause; a DELETE that would leave a card under 40 words is not applied; a normal DELETE still works", async () => {
+  assert.match(FACT_CHECK_SYSTEM, /who the person IS or the identity they built/);
+  assert.match(FACT_CHECK_SYSTEM, /A sentence framed as a reading/);
+  assert.equal(PROTECT_CARD_WORDS, 40);
+  const long = "This costs you now because business progress is slower and less visible than school progress, and every day that does not feel like grade 12 reads as a failure.";
+  const cut = "This costs you now because every day that does not feel like grade 12 reads as a failure.";
+  const out = await checkArchitectReport(report({ 6: card(6) + " " + long }), ANSWERS + " grade 12", {
+    ...deps().d,
+    factCheck: async (numbered) => [flag(numbered.find((x) => x.text === long)!.n, "EDIT", "Invents a comparison.", cut)],
+  });
+  assert.equal(out.report.sections[2].cards[0], card(6) + " " + cut);
+
+  // A 3-sentence card of 39 words: a DELETE would leave 26, so it is kept.
+  const thin = card(3).split(". ").slice(0, 3).join(". ") + ".";
+  const target = thin.split(". ")[1] + ".";
+  const kept = await checkArchitectReport(report({ 3: thin }), ANSWERS, {
+    ...deps().d,
+    factCheck: async (numbered) => [flag(numbered.find((x) => x.text === target)!.n, "DELETE", "Invents an event.")],
+  });
+  assert.ok(kept.report.sections[1].cards[0].includes(target));
+  assert.deepEqual(kept.debug.keptShort, [{ card: "Uncovered internal constraint, card 1", sentence: target, reason: "Invents an event. (kept, card would be too short)" }]);
+  // The same, with a valid edit attached, is applied as the edit.
+  const asEdit = await checkArchitectReport(report({ 3: thin }), ANSWERS, {
+    ...deps().d,
+    factCheck: async (numbered) => [{ ...flag(numbered.find((x) => x.text === target)!.n, "DELETE", "Invents an event."), edit: target.split(" ").slice(0, 7).join(" ") + "." }],
+  });
+  assert.ok(asEdit.report.sections[1].cards[0].includes(target.split(" ").slice(0, 7).join(" ") + "."));
+  assert.match(asEdit.debug.edited[0].reason, /applied as an edit/);
+  // A long card (65 words) loses the sentence as before.
+  const normal = card(4).split(". ")[2] + ".";
+  const del = await checkArchitectReport(report(), ANSWERS, {
+    ...deps().d,
+    factCheck: async (numbered) => [flag(numbered.find((x) => x.text === normal)!.n, "DELETE", "Invents an event.")],
+  });
+  assert.ok(!del.report.sections[1].cards[1].includes(normal));
+});
+
+test("5b-2 D and H (instruction only): the belief rules and the two-sentence act-as-if shape are in the instructions", () => {
+  const sys = buildReportSystem();
+  assert.match(sys, /Interpret meaning, never invent events/);
+  assert.match(sys, /It must explain how they react when things go wrong \(their answer 6\), and it must block the goal they named \(their answer 7\)/);
+  assert.match(sys, /"worth", "power", "edge", "capacity"/);
+  assert.match(sys, /tie the belief to the event they DID describe instead/);
+  assert.match(sys, /"Stop letting \[the belief\] decide what you do today\." and "Act as if \[the new belief\], even before you feel ready\."/);
+  assert.ok(!/stop letting \[the old belief\] decide, and act as if/.test(sys + CARD_REGEN_SYSTEM + JSON.stringify(CARD_ROLES)));
+});
+
+test("5b-2 E: the belief is optional; a reply without it is accepted and the belief comes from the constraint", async () => {
+  assert.deepEqual(REPORT_SCHEMA.required.slice(0, 1), ["belief"], "asked for first");
+  assert.ok(Object.keys(REPORT_SCHEMA.properties)[0] === "belief");
+  const without = JSON.stringify({ ...report(), constraint: B_CONSTRAINT });
+  assert.equal(reportShapeError(without), null, "no belief is not a shape failure, so no retry");
+  assert.equal(parseReport(without, SECTION_NAMES)!.belief, "");
+  assert.equal(beliefFromConstraint(B_CONSTRAINT), BELIEF);
+  assert.equal(beliefFromConstraint("Something else entirely."), "");
+  assert.equal(parseReport(JSON.stringify({ ...report(), belief: " " + BELIEF + " " }), SECTION_NAMES)!.belief, BELIEF);
+  // With it: the debug view shows it and where its exact words were found.
+  const out = await checkArchitectReport({ ...report({ 10: card(10) + " " + B_SENTENCE }), belief: BELIEF, constraint: B_CONSTRAINT }, ANSWERS, deps().d);
+  assert.deepEqual(out.debug.belief, { text: BELIEF, inConstraint: true, inDesign2: true });
+  const notFound = await checkArchitectReport({ ...report(), belief: BELIEF }, ANSWERS, deps().d);
+  assert.deepEqual(notFound.debug.belief, { text: BELIEF, inConstraint: false, inDesign2: false });
+  // An old stored report (no belief, no constraint) opens unchanged.
+  const old = report();
+  const parsed = parseReport(JSON.stringify(old), SECTION_NAMES)!;
+  assert.deepEqual(parsed.sections, old.sections);
+  assert.deepEqual(reportDisplay(parsed.sections, SECTION_NAMES, UI_TEXT.oldPattern, UI_TEXT.newPattern).sections.map((x) => x.cards), old.sections.map((x) => x.cards));
+});
+
+test("5b-2 F: the belief sentence in Life by design card 2 is never a repeat; elsewhere it still is", async () => {
+  const { d, calls } = deps();
+  const out = await checkArchitectReport(
+    {
+      ...report({ 10: card(10) + " " + B_SENTENCE, 6: card(6) + " " + B_SENTENCE, 1: card(1) + " " + B_SENTENCE, 4: card(4) + " " + B_SENTENCE }),
+      belief: BELIEF,
+      constraint: B_CONSTRAINT,
+    },
+    ANSWERS + " " + "5k",
+    d,
+  );
+  assert.ok(out.report.sections[3].cards[1].endsWith(B_SENTENCE), "Design card 2 keeps it");
+  assert.ok(!calls.some((c) => c.section === 3 && c.card === 1), "and is not rewritten");
+  assert.equal(out.report.sections[1].cards[1], card(4), "Uncovered card 2 copy is caught (a repeat of Where it started card 2)");
+  assert.equal(out.report.sections[2].cards[0], card(6), "Default card 1 copy is caught (a repeat of the constraint)");
+  // A normal repeated sentence in Design card 2 is still caught.
+  const shared = "You learned that money only ever arrives with a fight attached.";
+  const out2 = await checkArchitectReport({ ...report({ 2: card(2) + " " + shared, 10: card(10) + " " + shared }), belief: BELIEF }, ANSWERS, deps().d);
+  assert.equal(out2.report.sections[3].cards[1], card(10));
+});
+
+test("5b-2 G: one repeated sentence is deleted with no rewrite; a mostly repeated card is rewritten and fact-checked", async () => {
+  assert.equal(CARD_FIX.repeated, "Remove or rephrase the sentences that repeat other cards. Use only facts from the person's answers. Do not add any new claim. The card may come out shorter.");
+  assert.equal(CARD_FIX.short, "Write it again using only facts from the person's answers that this card has not used yet. Do not add any new claim. If there are no unused facts left, a shorter card is fine.");
+  // Card 7 copies 3 of the 5 sentences of card 1: more than half, so it is rewritten.
+  const copied = card(1).split(". ").slice(0, 3).join(". ") + ".";
+  const mostly = copied + " " + card(7).split(". ").slice(0, 2).join(". ") + ".";
+  const sent: string[] = [];
+  let checked: string[] = [];
+  const out = await checkArchitectReport(report({ 7: mostly }), ANSWERS, {
+    regenerate: async (sIdx, cIdx, fixes, current) => {
+      sent.push(current.sections[sIdx].cards[cIdx]);
+      assert.deepEqual(fixes, [CARD_FIX.repeated]);
+      return card(21);
+    },
+    factCheck: async (numbered) => {
+      checked = numbered.map((x) => x.text);
+      return [];
+    },
+  });
+  assert.deepEqual(sent, [mostly], "the rewrite sees the card with its repeats");
+  assert.equal(out.report.sections[2].cards[1], card(21));
+  assert.ok(sentencesOf(card(21)).every((x) => checked.includes(x)), "the main fact check covered the rewritten card");
+  const entry = out.debug.regenerated.find((e) => e.card === "Life by default, card 2")!;
+  assert.deepEqual([entry.kind, entry.factChecked, entry.flagged], ["repeat", true, 0]);
+});
+
+test("5b-2 G: a failed rewrite puts back the card with its repeats deleted; a rewrite under 15 words is discarded", async () => {
+  const copied = card(1).split(". ").slice(0, 3).join(". ") + ".";
+  const own = card(7).split(". ").slice(0, 2).join(". ") + ".";
+  const failed = await checkArchitectReport(report({ 7: copied + " " + own }), ANSWERS, { ...deps().d, regenerate: async () => null });
+  assert.equal(failed.report.sections[2].cards[1], own);
+  assert.match(failed.debug.regenerated[0].discarded!, /rewrite discarded: the rewrite call failed/);
+  // A rewrite that comes back tiny: under 15 words after the fact check, so the fallback is put back.
+  const tiny = await checkArchitectReport(report({ 7: copied + " " + own }), ANSWERS, { ...deps().d, regenerate: async () => "You stop." });
+  assert.equal(tiny.report.sections[2].cards[1], own);
+  assert.match(tiny.debug.regenerated[0].discarded!, /under 15 words after the fact check/);
+});
+
+test("5b-2 G: two short cards rewritten cause exactly one extra fact-check call, covering both", async () => {
+  const short = (t: number) => card(t).split(". ")[0] + ".";
+  let calls = 0;
+  let second: string[] = [];
+  const out = await checkArchitectReport(report({ 3: short(3), 4: short(4) }), ANSWERS, {
+    regenerate: async (_s, c) => (c === 0 ? card(20) : card(21)),
+    factCheck: async (numbered) => {
+      calls++;
+      if (calls === 2) second = numbered.map((x) => x.text);
+      return [];
+    },
+  });
+  assert.equal(calls, 2, "the main check plus one combined extra call");
+  assert.deepEqual(second, [...sentencesOf(card(20)), ...sentencesOf(card(21))]);
+  assert.equal(out.report.sections[1].cards[0], card(20));
+  assert.ok(out.debug.regenerated.every((e) => e.kind === "short" && e.factChecked === true && e.flagged === 0));
+  // Nothing rewritten: no extra call.
+  let n = 0;
+  await checkArchitectReport(report(), ANSWERS, { ...deps().d, factCheck: async () => { n++; return []; } });
+  assert.equal(n, 1);
+});
+
+test("5b-2 I: a crisis reply skips the anchor check and is shown as written; a normal real miss still gets the neutral line", async () => {
+  const answers = "I don't want to be here anymore.";
+  const crisis = await decideReaction(
+    async () => JSON.stringify({ reaction: "Thank you for telling me. That sounds really heavy.", anchor: "words they never wrote", crisis: true }),
+    7,
+    answers,
+    false,
+    "direct",
+  );
+  assert.equal(crisis.text, "Thank you for telling me. That sounds really heavy.");
+  assert.ok(crisis.crisis && crisis.anchorSkipped && !crisis.neutral);
+  assert.ok(!NEUTRAL_LINES.includes(crisis.text));
+  assert.match(UI_TEXT.supportLine, /988/);
+  const miss = await decideReaction(async () => JSON.stringify({ reaction: "You froze.", anchor: "made up", crisis: false }), 7, answers, false, "direct");
+  assert.equal(miss.text, "That is a clear target.");
+});
+
+test("5b-2 J: \"one\" that is not a quantity is not checked; quantities still are", () => {
+  for (const t of ["It was the one time money felt threatening.", "No one helped.", "One of them left.", "You and one another."]) {
+    assert.deepEqual(unsupportedItems(t, ANSWERS), [], t);
+  }
+  assert.deepEqual(unsupportedItems("That was one year ago.", ANSWERS), ["one"]);
+  assert.deepEqual(unsupportedItems("You saved one hundred.", ANSWERS), ["one hundred"]);
+  assert.deepEqual(unsupportedItems("You want one million.", ANSWERS), ["one million"]);
+});
+
+test("5b-2 J: the debug view gets the reason a report reply failed its shape, and the note and keep-phrase of an ignored entry", async () => {
+  assert.match(reportShapeError("{not json")!, /^not valid JSON/);
+  assert.equal(reportShapeError(JSON.stringify({ sections: [] })), "missing field hidden_tie");
+  assert.match(reportShapeError(JSON.stringify({ ...report(), sections: report().sections.slice(0, 3) }))!, /^sections has 3 sections, not 4/);
+  const bad = report();
+  bad.sections[2].cards[1] = "";
+  assert.match(reportShapeError(JSON.stringify(bad))!, /^sections\[2\]\.cards\[1\] is empty or not text/);
+  assert.match(reportShapeError(JSON.stringify({ ...report(), old_bullets: ["a"] }))!, /^old_bullets has 1 bullets, not 3/);
+  assert.ok(reportShapeError("x".repeat(1000))!.length < 400, "at most 300 characters of the offending part");
+  const target = card(0).split(". ")[1] + ".";
+  const out = await checkArchitectReport(report(), ANSWERS, {
+    ...deps().d,
+    factCheck: async (numbered) => [{ ...flag(numbered.find((x) => x.text === target)!.n, "DELETE", "Looks off."), raw: "Looks off. However, on reflection this is fine." }],
+  });
+  assert.deepEqual(out.debug.ignored[0], {
+    card: "Where it started, card 1",
+    sentence: target,
+    reason: "Looks off.",
+    note: "Looks off. However, on reflection this is fine.",
+    keepPhrase: "is fine",
+  });
+});
+
+test("5b-2 K: the new hint shows under the last question in all four domains and is never sent to the AI", () => {
+  const hint = "Think about how they talk, how they walk into a room, and how they handle a bad day. Also their beliefs, expectations, feelings, reactions, what they pay attention to, and what they think about. Then begin to embody that now.";
+  for (const d of DOMAIN_KEYS) {
+    assert.equal(QUESTION_HINTS[d][7], hint, d);
+    assert.equal(QUESTION_HINTS[d].filter((h) => h === hint).length, 1, d);
+    assert.ok(!QUESTIONS[d][7].includes("embody"), "question text unchanged");
+    const f = answeredUpTo(8);
+    const sent = buildReactionInput(d, f, 8, "direct", false) + buildReportInput(d, f, false);
+    assert.ok(!sent.includes("Then begin to embody that now."));
+  }
 });

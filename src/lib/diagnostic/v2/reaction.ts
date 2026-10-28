@@ -59,9 +59,10 @@ export function neutralLine(step: number): string {
  * Runs the reaction call (at most twice) and decides what is shown.
  * Attempt 1 is retried if the call fails, the reply can't be used, its
  * anchor isn't in their answers, or it has a dash. If the anchor is still
- * not found after the retry, the question's neutral line is shown instead
- * (a crisis flag on the reply is kept, so the support line still shows).
+ * not found after the retry, the question's neutral line is shown instead.
  * If no usable reply comes back at all, the neutral line is shown too.
+ * A reply with the crisis flag skips the anchor check and is shown as the
+ * AI wrote it (after the same clean-up), never replaced by a neutral line.
  * `answers` is everything the person has typed up to this question.
  */
 export async function decideReaction(
@@ -78,6 +79,15 @@ export async function decideReaction(
       if (!parsed) {
         problems.push("attempt " + attempt + ": reply was not valid");
         continue;
+      }
+      if (parsed.crisis) {
+        const cleaned = cleanReaction(parsed.reaction, answers);
+        // If the clean-up left nothing, the reply is shown with only its dashes replaced.
+        const text = cleaned.text || replaceDashes(parsed.reaction).trim();
+        return {
+          step, text, crisis: true, anchor: parsed.anchor, anchorOk: anchorInAnswers(parsed.anchor, answers), anchorSkipped: true,
+          thin, boldness, fired: cleaned.fired, attempts: attempt, problems,
+        };
       }
       const anchorOk = anchorInAnswers(parsed.anchor, answers);
       const dash = hasDash(parsed.reaction);

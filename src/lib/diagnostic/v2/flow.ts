@@ -10,8 +10,6 @@
 
 export const ANSWER_STEPS = 8;
 export const TOTAL_STEPS = ANSWER_STEPS;
-/** The halfway screen comes after the reaction to this answer. */
-export const HALFWAY_AFTER = 4;
 export const MAX_ANSWER_CHARS = 3000;
 
 /** How bold a reaction may be: gentle for answers 1 to 3, medium for 4 and 5, direct for 6 to 8. */
@@ -30,6 +28,8 @@ export interface Reaction {
   fallback?: boolean;
   /** True when the question's neutral line was shown instead of the AI's reaction. */
   neutral?: boolean;
+  /** Debug: the reply had the crisis flag, so the anchor check was skipped. */
+  anchorSkipped?: boolean;
   /** Debug: the exact words from their answers the reaction is built on, and whether the code found them. */
   anchor?: string;
   anchorOk?: boolean;
@@ -48,17 +48,15 @@ export interface Flow {
   /** Only in older diagnostics; always empty now. */
   taps: boolean[];
   reactions: Reaction[];
-  halfwaySeen: boolean;
 }
 
 export type Screen =
   | { kind: "question"; step: number }
   | { kind: "reaction"; step: number }
-  | { kind: "halfway" }
   | { kind: "done" };
 
 export function emptyFlow(): Flow {
-  return { answers: [], taps: [], reactions: [], halfwaySeen: false };
+  return { answers: [], taps: [], reactions: [] };
 }
 
 /** Reads a saved flow defensively; anything malformed becomes an empty flow. */
@@ -70,7 +68,6 @@ export function parseFlow(value: unknown): Flow {
     reactions: Array.isArray(v.reactions)
       ? v.reactions.filter((r): r is Reaction => !!r && typeof r.step === "number" && typeof r.text === "string")
       : [],
-    halfwaySeen: v.halfwaySeen === true,
   };
 }
 
@@ -85,10 +82,7 @@ export function reactionFor(f: Flow, step: number): Reaction | undefined {
 export function currentScreen(f: Flow): Screen {
   const missing = f.answers.map((_, i) => i + 1).find((s) => !reactionFor(f, s));
   if (missing !== undefined) return { kind: "reaction", step: missing };
-  if (f.answers.length < ANSWER_STEPS) {
-    if (f.answers.length === HALFWAY_AFTER && !f.halfwaySeen) return { kind: "halfway" };
-    return { kind: "question", step: f.answers.length + 1 };
-  }
+  if (f.answers.length < ANSWER_STEPS) return { kind: "question", step: f.answers.length + 1 };
   return { kind: "done" };
 }
 
@@ -114,10 +108,6 @@ export function withReaction(f: Flow, r: Reaction): Flow {
   return { ...f, reactions: [...f.reactions.filter((x) => x.step !== r.step), r] };
 }
 
-export function withHalfwaySeen(f: Flow): Flow {
-  return { ...f, halfwaySeen: true };
-}
-
 /** True when any reaction came back with the crisis flag; the report is then written as SENSITIVE. */
 export function isSensitive(f: Flow): boolean {
   return f.reactions.some((r) => r.crisis);
@@ -126,8 +116,7 @@ export function isSensitive(f: Flow): boolean {
 export type Bubble =
   | { kind: "question"; text: string; hint?: string }
   | { kind: "answer"; text: string }
-  | { kind: "reaction"; text: string; crisis: boolean }
-  | { kind: "halfway" };
+  | { kind: "reaction"; text: string; crisis: boolean };
 
 /**
  * The chat as the person sees it: each question, their answer, and the
@@ -149,8 +138,6 @@ export function transcript(f: Flow, questions: string[], hints: string[] = []): 
     }
     out.push({ kind: "question", text: questions[i], hint: hints[i] }, { kind: "answer", text: f.answers[i] });
     react(step);
-    if (step === HALFWAY_AFTER && f.halfwaySeen) out.push({ kind: "halfway" });
-    if (step === HALFWAY_AFTER && !f.halfwaySeen) return out;
   }
   return out;
 }

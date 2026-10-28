@@ -2,28 +2,38 @@
 //
 // Code checks (deterministic), per card: every number and quoted phrase must
 // come from the answers; no banned wording (including "chase"), no advice or
-// instruction wording, no em or en dashes, no sentence repeated from another
-// card, no 8-word phrase shared with another card, no 5-word phrase used
-// twice inside the card, no duration or frequency ("for years", "always")
-// and no timing or reference back ("at the same time", "the old fear") the
-// person never used. A card that fails is rewritten once; whatever still
-// fails is deleted sentence by sentence (dashes are replaced with commas
-// instead). Sentences that tell the person what they "really" want, comment
-// on their words ("you used that word") or are empty aphorisms ("where the
-// real pattern lives") are deleted straight away. The fixed closing lines of
-// "Life by default" and "Life by design" are put at the end of their own
-// cards exactly once, and removed from every other card. The constraint
-// sentence replaces the last sentence of "Uncovered internal constraint"
-// card 3 and is kept last there.
+// instruction wording, no em or en dashes, no duration or frequency ("for
+// years", "always") and no timing or reference back ("at the same time",
+// "the old fear") the person never used. A card that fails is rewritten
+// once; whatever still fails is deleted sentence by sentence (dashes are
+// replaced with commas instead). Sentences that tell the person what they
+// "really" want, comment on their words, are empty aphorisms or teaser
+// claims are deleted straight away.
+//
+// Repeats (a sentence or 8-word phrase from an earlier card, or a 5-word
+// phrase used twice in one card) are deleted first. The card is rewritten
+// only if that leaves fewer than 2 sentences or 25 words, or more than half
+// its sentences repeated. The sentence of "Life by design" card 2 that holds
+// the belief is never counted as a repeat.
+//
+// The fixed closing lines of "Life by default" and "Life by design" are put
+// at the end of their own cards exactly once, and removed from every other
+// card. The constraint sentence replaces the last sentence of "Uncovered
+// internal constraint" card 3 and is kept last there.
 //
 // AI check: one call (retried once if it fails) flags sentences, each with a
 // verdict: DELETE, or EDIT by removing words only; an edit that adds or
-// changes words is treated as a delete. An entry whose reason says to keep
-// the sentence ("rescind", "is fine") is ignored. Every card that lost a
-// sentence then gets one narrow AI call for sentences left pointing at what
-// was deleted. Then the code checks run again, deleting only. A card left
-// under 40 words is rewritten once, told what was deleted and why, and the
-// new card gets the code checks and the AI check once more. No loops.
+// changes words is treated as a delete. Entries aimed at a closing line, or
+// whose reason says to keep the sentence ("rescind", "is fine"), are
+// ignored. A delete that would leave a card under 40 words is applied as
+// its edit if it has a valid one, otherwise not applied. Every card that
+// lost a sentence then gets one narrow AI call for sentences left pointing
+// at what was deleted. Then the code checks run again, deleting only. A card
+// left under 25 words is rewritten once, told what was deleted and why.
+// Every card rewritten after the main AI check (or put back after a failed
+// rewrite) gets the code checks and one more AI check, all in one call. A
+// rewrite that fails, or leaves a card under 15 words, is discarded. No
+// loops.
 //
 // The AI calls are passed in, so this module stays pure and testable.
 
@@ -44,23 +54,32 @@ import {
 import type { ArchitectReport, FactFlag } from "./schema.ts";
 import {
   bannedIn,
+  containsBelief,
   countWords,
   durationsNotSaid,
   hasDash,
   instructionsIn,
   isWordsRemovedOnly,
+  keepPhraseIn,
   normalize,
   removeSentences,
   repeatedSentences,
   repeatedWithinCard,
   replaceDashes,
-  saysKeep,
   sentencesOf,
   splitCard,
   unsupportedItems,
 } from "./text.ts";
 
-export const MIN_CARD_WORDS = 40;
+/** A card under this many words (after all checks) is rewritten once. */
+export const MIN_CARD_WORDS = 25;
+/** An AI check delete that would leave a card under this many words is not applied (closing line not counted). */
+export const PROTECT_CARD_WORDS = 40;
+/** After deleting repeats, a card keeps at least this many sentences and words (closing line not counted), or it is rewritten. */
+export const REPEAT_KEEP_SENTENCES = 2;
+export const REPEAT_KEEP_WORDS = 25;
+/** A rewritten card under this many words after its fact check is discarded. */
+export const DISCARD_WORDS = 15;
 
 export interface CheckDeps {
   /** Rewrites one card; null if the call fails. */
@@ -76,7 +95,18 @@ export interface CheckDeps {
 }
 
 export interface CheckDebug {
-  regenerated: { card: string; reasons: string[]; result: "replaced" | "failed" | "refused" }[];
+  regenerated: {
+    card: string;
+    reasons: string[];
+    result: "replaced" | "failed" | "refused";
+    /** Why the card was rewritten: a repeat, too short, or another code check. */
+    kind?: "repeat" | "short" | "code";
+    /** Whether the rewritten card went through an AI fact check, and how many of its sentences were flagged. */
+    factChecked?: boolean;
+    flagged?: number;
+    /** Set when the rewrite was thrown away and the earlier version put back. */
+    discarded?: string;
+  }[];
   deleted: { card: string; sentence: string; reason: string; by: "code" | "ai" }[];
   edited: { card: string; before: string; after: string; reason: string }[];
   aiCheck: { status: "ok" | "failed"; attempts: number; flagged: number; error?: string };
@@ -84,11 +114,15 @@ export interface CheckDebug {
   fired: string[];
   /** Cards still under the minimum length when the report shipped. */
   shortCards: string[];
-  /** AI check entries ignored because their reason said to keep the sentence. */
-  ignored: { card: string; sentence: string; reason: string }[];
+  /** AI check entries ignored because their reason said to keep the sentence: the full note, and the keep-phrase that matched. */
+  ignored: { card: string; sentence: string; reason: string; note?: string; keepPhrase?: string }[];
+  /** AI check deletes not applied because the card would drop under 40 words. */
+  keptShort?: { card: string; sentence: string; reason: string }[];
+  /** The belief, and whether its exact words are in the constraint and in "Life by design" card 2. */
+  belief?: { text: string; inConstraint: boolean; inDesign2: boolean };
   /** The narrow check on each card that lost a sentence in the AI check. */
   dangling: { card: string; status: "ok" | "failed"; flagged: number; error?: string }[];
-  /** The AI check on cards rewritten for being too short. */
+  /** The one AI check on cards rewritten (or put back) after the main AI check. */
   shortCheck?: { status: "ok" | "failed"; attempts: number; flagged: number; error?: string };
   /** AI check entries aimed at a fixed closing line, skipped without counting them. */
   closingSkipped?: number;
@@ -208,6 +242,26 @@ function keepFor(r: ArchitectReport, ref: Ref): string | undefined {
   return closingFor(ref);
 }
 
+/** "Life by design", card 2: its belief sentence is never counted as a repeat. */
+export const DESIGN2_REF: Ref = { s: 3, c: 1 };
+
+function isBeliefSentence(r: ArchitectReport, ref: Ref, sentence: string): boolean {
+  return ref.s === DESIGN2_REF.s && ref.c === DESIGN2_REF.c && containsBelief(sentence, r.belief);
+}
+
+/** The sentences of a card that repeat earlier cards or a phrase inside the card, minus the exempt belief sentence. */
+export function repeatsIn(r: ArchitectReport, ref: Ref): Set<string> {
+  const cards = flat(r);
+  const i = ref.s * 3 + ref.c;
+  const all = [...repeatedSentences(cards, i), ...repeatedWithinCard(cards[i], keepFor(r, ref))];
+  return new Set(all.filter((s) => !isBeliefSentence(r, ref, s)));
+}
+
+/** Words in a card, not counting a fixed closing line. */
+function wordsWithoutClosing(card: string): number {
+  return countWords(sentencesOf(card).filter((s) => !isClosingLine(s)).join(" "));
+}
+
 /**
  * Removes every copy of the two closing lines from every card, including
  * reworded copies ("That's your default, and it has run a long time."), then
@@ -229,7 +283,10 @@ export function enforceClosings(r: ArchitectReport): ArchitectReport {
 // ---------------------------------------------------------------------------
 // Code checks
 
-/** The code checks one card fails, as kinds and as fix instructions for a rewrite. */
+/**
+ * The code checks one card fails, as kinds and as fix instructions for a
+ * rewrite. Repeats are handled on their own (see deleteRepeats).
+ */
 export function cardIssues(r: ArchitectReport, ref: Ref, answers: string): { kinds: string[]; fixes: string[] } {
   const cards = flat(r);
   const i = ref.s * 3 + ref.c;
@@ -254,14 +311,6 @@ export function cardIssues(r: ArchitectReport, ref: Ref, answers: string): { kin
   if (hasDash(card)) {
     kinds.push("em dash");
     fixes.push(CARD_FIX.dash);
-  }
-  if (repeatedSentences(cards, i).length) {
-    kinds.push("repeats another card");
-    fixes.push(CARD_FIX.repeated);
-  }
-  if (repeatedWithinCard(card, keepFor(r, ref)).length) {
-    kinds.push("repeats itself");
-    fixes.push(CARD_FIX.repeatedWithin);
   }
   const durations = durationsNotSaid(card, answers, DURATION_PHRASES);
   if (durations.length) {
@@ -290,8 +339,8 @@ function deleteFailing(r: ArchitectReport, answers: string, debug: CheckDebug): 
   for (const ref of refs()) {
     const cards = flat(out);
     const i = ref.s * 3 + ref.c;
-    const repeats = new Set(repeatedSentences(cards, i));
-    const within = new Set(repeatedWithinCard(cards[i], keepFor(out, ref)));
+    const repeats = new Set(repeatedSentences(cards, i).filter((s) => !isBeliefSentence(out, ref, s)));
+    const within = new Set(repeatedWithinCard(cards[i], keepFor(out, ref)).filter((s) => !isBeliefSentence(out, ref, s)));
     const remove = new Map<string, string>();
     for (const s of sentencesOf(cards[i])) {
       const unsupported = unsupportedItems(s, answers);
@@ -342,30 +391,66 @@ function keepsOtherSentences(before: string, after: string, answers: string): bo
   return sentencesOf(before).every((s) => unsupportedItems(s, answers).length > 0 || kept.has(s));
 }
 
-/** Rewrites the given cards once each, in parallel. */
+type Job = { ref: Ref; fixes: string[]; numberOnly?: boolean; kind: "repeat" | "short" | "code"; send?: string };
+
+/**
+ * Rewrites the given cards once each, in parallel. `send` is the card text
+ * the rewrite sees, when it differs from the card in the report (a card
+ * whose repeats were already deleted is sent with them). Returns the debug
+ * entry of each job.
+ */
 async function regenerateAll(
   r: ArchitectReport,
-  jobs: { ref: Ref; fixes: string[]; numberOnly?: boolean }[],
+  jobs: Job[],
   answers: string,
   deps: CheckDeps,
   debug: CheckDebug,
-): Promise<ArchitectReport> {
-  const results = await Promise.all(jobs.map((j) => deps.regenerate(j.ref.s, j.ref.c, j.fixes, r).catch(() => null)));
+): Promise<{ report: ArchitectReport; entries: CheckDebug["regenerated"] }> {
+  const results = await Promise.all(
+    jobs.map((j) => deps.regenerate(j.ref.s, j.ref.c, j.fixes, j.send === undefined ? r : withCard(r, j.ref, j.send)).catch(() => null)),
+  );
   let out = r;
-  jobs.forEach((j, k) => {
+  const entries = jobs.map((j, k) => {
     const text = results[k];
-    if (!text) {
-      debug.regenerated.push({ card: label(r, j.ref), reasons: j.fixes, result: "failed" });
-      return;
+    const before = j.send ?? cardAt(r, j.ref);
+    let entry: CheckDebug["regenerated"][number];
+    if (!text) entry = { card: label(r, j.ref), reasons: j.fixes, result: "failed", kind: j.kind };
+    else if (j.numberOnly && !keepsOtherSentences(before, text, answers)) {
+      entry = { card: label(r, j.ref), reasons: [...j.fixes, "Refused: the rewrite changed more than the number."], result: "refused", kind: j.kind };
+    } else {
+      entry = { card: label(r, j.ref), reasons: j.fixes, result: "replaced", kind: j.kind };
+      out = withCard(out, j.ref, text);
     }
-    if (j.numberOnly && !keepsOtherSentences(cardAt(r, j.ref), text, answers)) {
-      debug.regenerated.push({ card: label(r, j.ref), reasons: [...j.fixes, "Refused: the rewrite changed more than the number."], result: "refused" });
-      return;
-    }
-    debug.regenerated.push({ card: label(r, j.ref), reasons: j.fixes, result: "replaced" });
-    out = withCard(out, j.ref, text);
+    debug.regenerated.push(entry);
+    return entry;
   });
-  return out;
+  return { report: out, entries };
+}
+
+/**
+ * Deletes repeated sentences card by card, in order. A card that would be
+ * left with fewer than 2 sentences or 25 words, or that had more than half
+ * its sentences repeated, is returned for a rewrite instead: it still loses
+ * the repeats now (so later cards are compared with what is left), and the
+ * rewrite is sent the card as it was.
+ */
+function deleteRepeats(r: ArchitectReport, debug: CheckDebug): { report: ArchitectReport; rewrite: { ref: Ref; original: string; fallback: string }[] } {
+  let out = r;
+  const rewrite: { ref: Ref; original: string; fallback: string }[] = [];
+  for (const ref of refs()) {
+    const repeats = repeatsIn(out, ref);
+    if (repeats.size === 0) continue;
+    const original = cardAt(out, ref);
+    const after = removeSentences(original, repeats);
+    const left = sentencesOf(after).filter((s) => !isClosingLine(s)).length;
+    const counted = sentencesOf(original).filter((s) => !isClosingLine(s)).length;
+    const tooMuch = left < REPEAT_KEEP_SENTENCES || wordsWithoutClosing(after) < REPEAT_KEEP_WORDS || repeats.size > counted / 2;
+    for (const sentence of repeats) debug.deleted.push({ card: label(out, ref), sentence, reason: "repeats an earlier card or a phrase in this card", by: "code" });
+    debug.fired.push(label(out, ref) + ": " + repeats.size + " repeated sentence(s) deleted" + (tooMuch ? ", card sent for a rewrite" : ""));
+    if (tooMuch) rewrite.push({ ref, original, fallback: after });
+    out = withCard(out, ref, after);
+  }
+  return { report: out, rewrite };
 }
 
 function cleanBullets(r: ArchitectReport, answers: string, debug: CheckDebug): ArchitectReport {
@@ -447,12 +532,27 @@ function applyFlags(
     const item = numbered.find((x) => x.n === f.n);
     if (!item) continue;
     const where = item.ref === "old" ? "Life by default bullets" : item.ref === "new" ? "Life by design bullets" : label(out, item.ref);
-    if (saysKeep(f.raw, FACT_CHECK_KEEP_PHRASES)) {
-      debug.ignored.push({ card: where, sentence: item.text, reason: f.reason });
+    const keepPhrase = keepPhraseIn(f.raw, FACT_CHECK_KEEP_PHRASES);
+    if (keepPhrase) {
+      debug.ignored.push({ card: where, sentence: item.text, reason: f.reason, note: f.raw, keepPhrase });
       continue;
     }
-    const edit = f.verdict === "EDIT" && isWordsRemovedOnly(item.text, f.edit) ? replaceDashes(f.edit) : null;
-    const reason = f.reason + (f.verdict === "EDIT" && !edit ? " (the edit changed words, so the sentence was deleted)" : "");
+    let edit = f.verdict === "EDIT" && isWordsRemovedOnly(item.text, f.edit) ? replaceDashes(f.edit) : null;
+    let reason = f.reason + (f.verdict === "EDIT" && !edit ? " (the edit changed words, so the sentence was deleted)" : "");
+    // Thin-card protection: a delete that would leave the card under 40
+    // words becomes its edit if it has a valid one, or is not applied.
+    if (!edit && item.ref !== "old" && item.ref !== "new") {
+      const remaining = wordsWithoutClosing(removeSentences(cardAt(out, item.ref), new Set([item.text])));
+      if (remaining < PROTECT_CARD_WORDS && sentencesOf(cardAt(out, item.ref)).includes(item.text)) {
+        if (f.edit && isWordsRemovedOnly(item.text, f.edit)) {
+          edit = replaceDashes(f.edit);
+          reason = f.reason + " (applied as an edit: deleting would leave the card under " + PROTECT_CARD_WORDS + " words)";
+        } else {
+          (debug.keptShort ??= []).push({ card: where, sentence: item.text, reason: f.reason + " (kept, card would be too short)" });
+          continue;
+        }
+      }
+    }
     if (item.ref === "old" || item.ref === "new") {
       const key = item.ref === "old" ? "old_bullets" : "new_bullets";
       out = { ...out, [key]: edit ? out[key].map((b) => (b === item.text ? edit : b)) : out[key].filter((b) => b !== item.text) };
@@ -480,6 +580,14 @@ function applyFlags(
   return { report: out, lost };
 }
 
+/** How many entries were aimed at the sentences of the card with this label. */
+function flaggedOn(r: ArchitectReport, numbered: Numbered[], flags: FactFlag[], card: string): number {
+  return flags.filter((f) => {
+    const item = numbered.find((x) => x.n === f.n);
+    return item && item.ref !== "old" && item.ref !== "new" && label(r, item.ref) === card;
+  }).length;
+}
+
 export async function checkArchitectReport(
   report: ArchitectReport,
   answers: string,
@@ -500,25 +608,42 @@ export async function checkArchitectReport(
   if (report.constraint) debug.constraint = { status: "placed", text: report.constraint, replaced: placed.replaced };
   let r = enforceClosings(placed.report);
 
-  // 1. Code checks: rewrite each failing card once, then delete what still fails.
-  const failing = refs()
-    .map((ref) => ({ ref, ...cardIssues(r, ref, answers) }))
-    .filter((j) => j.fixes.length > 0);
-  for (const j of failing) debug.fired.push(label(r, j.ref) + ": " + j.kinds.join(", "));
-  if (failing.length) {
-    const jobs = failing.map((j) => ({ ref: j.ref, fixes: j.fixes, numberOnly: j.kinds.length === 1 && j.kinds[0].startsWith("number") }));
-    r = enforceClosings(await regenerateAll(r, jobs, answers, deps, debug));
+  // 1. Repeats are deleted first; a card left too thin by that is rewritten.
+  //    Then the other code checks: each failing card is rewritten once (one
+  //    rewrite per card, whatever the reasons), then what still fails is deleted.
+  const repeats = deleteRepeats(r, debug);
+  r = enforceClosings(repeats.report);
+  const jobs = new Map<string, Job>();
+  for (const x of repeats.rewrite) {
+    jobs.set(label(r, x.ref), { ref: x.ref, fixes: [CARD_FIX.repeated], kind: "repeat", send: x.original });
+  }
+  for (const ref of refs()) {
+    const issues = cardIssues(r, ref, answers);
+    if (!issues.fixes.length) continue;
+    debug.fired.push(label(r, ref) + ": " + issues.kinds.join(", "));
+    const existing = jobs.get(label(r, ref));
+    if (existing) existing.fixes.push(...issues.fixes);
+    else jobs.set(label(r, ref), { ref, fixes: issues.fixes, kind: "code", numberOnly: issues.kinds.length === 1 && issues.kinds[0].startsWith("number") });
+  }
+  const fallbackOf = new Map(repeats.rewrite.map((x) => [label(r, x.ref), x.fallback]));
+  const step1 = jobs.size ? await regenerateAll(r, [...jobs.values()], answers, deps, debug) : { report: r, entries: [] };
+  r = enforceClosings(step1.report);
+  const repeatRewrites = step1.entries.filter((e) => e.kind === "repeat");
+  for (const e of repeatRewrites) {
+    if (e.result !== "replaced") e.discarded = "rewrite discarded: the rewrite call failed, kept the card with its repeats deleted";
   }
   r = enforceClosings(deleteFailing(r, answers, debug));
   r = cleanBullets(r, answers, debug);
 
-  // 2. The one AI check, retried once if the call fails. Each flagged sentence
-  //    is edited (words removed only) or deleted, unless its reason says keep.
+  // 2. The one AI check, retried once if the call fails. It also checks every
+  //    card rewritten in step 1.
   const numbered = numberAll(r);
   const flagged = await withRetry(() => deps.factCheck(numbered.map(({ n, text, section }) => ({ n, text, section }))), debug.aiCheck);
+  for (const e of step1.entries) if (e.result === "replaced") Object.assign(e, { factChecked: !!flagged, flagged: 0 });
   if (flagged) {
     const real = withoutClosings(numbered, flagged, debug);
     debug.aiCheck.flagged = real.length;
+    for (const e of step1.entries) if (e.result === "replaced") e.flagged = flaggedOn(r, numbered, real, e.card);
     const applied = applyFlags(r, numbered, real, debug);
     r = applied.report;
 
@@ -548,40 +673,76 @@ export async function checkArchitectReport(
     }
   }
 
+  // A repeat rewrite left under 15 words is thrown away: the card goes back
+  // to its version with the repeats deleted, and is checked again in step 5.
+  const recheck: Ref[] = [];
+  for (const e of repeatRewrites) {
+    const ref = refs().find((x) => label(r, x) === e.card)!;
+    if (e.result === "replaced" && wordsWithoutClosing(cardAt(r, ref)) < DISCARD_WORDS) {
+      e.discarded = "rewrite discarded: under " + DISCARD_WORDS + " words after the fact check, put back the card with its repeats deleted";
+      r = enforceClosings(withCard(r, ref, fallbackOf.get(e.card)!));
+      recheck.push(ref);
+    }
+  }
+
   // 4. The code checks once more, deleting only.
   r = enforceClosings(deleteFailing(r, answers, debug));
   r = cleanBullets(r, answers, debug);
 
-  // 5. A card left under 40 words is rewritten once, told what was deleted
-  //    and why. The new card gets the code checks and one AI check.
-  const short = refs().filter((ref) => countWords(cardAt(r, ref)) < MIN_CARD_WORDS);
+  // 5. A card left under 25 words is rewritten once, told what was deleted
+  //    and why. Every card rewritten here, and every card put back above,
+  //    gets the code checks and one more AI check, all in one call.
+  const short = refs().filter((ref) => countWords(cardAt(r, ref)) < MIN_CARD_WORDS && !recheck.some((x) => x.s === ref.s && x.c === ref.c));
+  const beforeShort = r;
+  let shortEntries: CheckDebug["regenerated"] = [];
   if (short.length) {
-    const jobs = short.map((ref) => {
+    const shortJobs: Job[] = short.map((ref) => {
       const gone = debug.deleted.filter((d) => d.card === label(r, ref));
-      const fixes = gone.length
-        ? [CARD_FIX.afterDeletions, ...gone.map((d) => '"' + d.sentence + '" (' + d.reason + ")")]
-        : [CARD_FIX.short];
-      return { ref, fixes };
+      const fixes = gone.length ? [CARD_FIX.afterDeletions, ...gone.map((d) => '"' + d.sentence + '" (' + d.reason + ")")] : [CARD_FIX.short];
+      return { ref, fixes, kind: "short" };
     });
-    const before = r;
-    r = enforceClosings(await regenerateAll(r, jobs, answers, deps, debug));
-    const rewritten = short.filter((ref) => cardAt(r, ref) !== cardAt(before, ref));
+    const res = await regenerateAll(r, shortJobs, answers, deps, debug);
+    shortEntries = res.entries;
+    for (const e of shortEntries) if (e.result !== "replaced") e.discarded = "rewrite discarded: the rewrite call failed, kept the card as it was";
+    r = enforceClosings(res.report);
+  }
+  const rewritten = short.filter((ref) => cardAt(r, ref) !== cardAt(beforeShort, ref));
+  const again = [...rewritten, ...recheck];
+  if (again.length) {
     r = enforceClosings(deleteFailing(r, answers, debug));
-    if (rewritten.length) {
-      debug.shortCheck = { status: "failed", attempts: 0, flagged: 0 };
-      const again = numberAll(r, rewritten);
-      const flags = await withRetry(() => deps.factCheck(again.map(({ n, text, section }) => ({ n, text, section }))), debug.shortCheck);
-      if (flags) {
-        const real = withoutClosings(again, flags, debug);
-        debug.shortCheck.flagged = real.length;
-        r = applyFlags(r, again, real, debug).report;
-      }
-      r = enforceClosings(deleteFailing(r, answers, debug));
+    debug.shortCheck = { status: "failed", attempts: 0, flagged: 0 };
+    const nums = numberAll(r, again);
+    const flags = await withRetry(() => deps.factCheck(nums.map(({ n, text, section }) => ({ n, text, section }))), debug.shortCheck);
+    const real = flags ? withoutClosings(nums, flags, debug) : [];
+    if (flags) {
+      debug.shortCheck.flagged = real.length;
+      r = applyFlags(r, nums, real, debug).report;
     }
+    for (const e of shortEntries) if (e.result === "replaced") Object.assign(e, { factChecked: !!flags, flagged: flaggedOn(r, nums, real, e.card) });
+    for (const ref of recheck) {
+      const e = repeatRewrites.find((x) => x.card === label(r, ref));
+      if (e) e.discarded += flags ? " (that card was fact-checked again: " + flaggedOn(r, nums, real, e.card) + " flagged)" : " (the fact check on it failed)";
+    }
+    // A short rewrite left under 15 words is thrown away: the card goes back to how it was before the rewrite.
+    for (const e of shortEntries) {
+      const ref = short.find((x) => label(r, x) === e.card)!;
+      if (e.result === "replaced" && wordsWithoutClosing(cardAt(r, ref)) < DISCARD_WORDS) {
+        e.discarded = "rewrite discarded: under " + DISCARD_WORDS + " words after the fact check, put back the card as it was before the rewrite";
+        r = enforceClosings(withCard(r, ref, cardAt(beforeShort, ref)));
+      }
+    }
+    r = enforceClosings(deleteFailing(r, answers, debug));
   }
 
   r = { ...r, hidden_tie: replaceDashes(r.hidden_tie) };
   if (r.constraint) debug.constraint.text = r.constraint;
+  if (r.belief) {
+    debug.belief = {
+      text: r.belief,
+      inConstraint: containsBelief(r.constraint ?? "", r.belief),
+      inDesign2: containsBelief(cardAt(r, DESIGN2_REF), r.belief),
+    };
+  }
   debug.shortCards = refs()
     .filter((ref) => countWords(cardAt(r, ref)) < MIN_CARD_WORDS)
     .map((ref) => label(r, ref));

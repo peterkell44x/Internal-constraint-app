@@ -39,7 +39,7 @@ async function post(url: string, body?: unknown): Promise<DiagnosticView> {
 
 /**
  * The Architect diagnosis: 8 fixed questions, a short reaction after each,
- * a halfway screen after the fourth, then a "Show me my report" button.
+ * then a "Show me my report" button.
  * Everything is saved on the server after each step, so a reload picks up at
  * the same step.
  */
@@ -169,9 +169,7 @@ export default function ArchitectSession({ initial, subtitle, questions, hints, 
 
       <div className="chat architect-chat" ref={chatRef}>
         {bubbles.map((b, i) =>
-          b.kind === "halfway" ? (
-            <div key={i} className="bubble assistant halfway-note">{text.halfway}</div>
-          ) : b.kind === "answer" ? (
+          b.kind === "answer" ? (
             <div key={i} className="bubble user">{b.text}</div>
           ) : (
             <div key={i} className={"bubble assistant" + (b.kind === "question" ? " question" : "")}>
@@ -204,17 +202,8 @@ export default function ArchitectSession({ initial, subtitle, questions, hints, 
         </div>
       )}
 
-      {screen.kind === "halfway" && (
-        <div className="halfway-card">
-          <p>{text.halfway}</p>
-          <button className="primary" onClick={() => void act(null, base + "/halfway")} disabled={busy}>
-            {text.halfwayButton}
-          </button>
-        </div>
-      )}
-
       {screen.kind === "done" && view.status === "in_progress" && (
-        <div className="halfway-card">
+        <div className="report-button-card">
           <button className="primary" onClick={showReport} disabled={busy}>{text.showReport}</button>
         </div>
       )}

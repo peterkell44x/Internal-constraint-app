@@ -50,6 +50,10 @@ const SCALES: Record<string, number> = { hundred: 100, thousand: 1000, million: 
 /** "one", "two" and "three" count as a number in the report only before one of these words. */
 const COUNT_NOUN = /^(year|years|month|months|week|weeks|day|days|hour|hours|minute|minutes|time|times|kid|kids|child|children|job|jobs|people|person|friend|friends|dollar|dollars|grand|k|pound|pounds|kg|kilo|kilos|lb|lbs|percent|session|sessions|grade|business|businesses|attempt|attempts|relationship|relationships|partner|partners|brother|brothers|sister|sisters)$/;
 const SMALL_WORDS = new Set(["one", "two", "three"]);
+/** "one" is not a quantity after these words ("the one time", "no one")... */
+const ONE_AFTER = new Set(["the", "no", "any", "every", "that", "this", "each"]);
+/** ...or before these ("one of them", "one another", "one who"). */
+const ONE_BEFORE = new Set(["of", "another", "who", "that", "which", "thing"]);
 
 export interface FoundNumber {
   value: number;
@@ -91,6 +95,7 @@ export function findNumbers(text: string, { strictSmall = false }: { strictSmall
       n = 1;
     }
     if (n === null) continue;
+    if (w === "one" && !(words[i + 1] in SCALES) && (ONE_AFTER.has(words[i - 1]) || ONE_BEFORE.has(words[i + 1]))) continue;
     if (words[j + 1] in SCALES) {
       n *= SCALES[words[j + 1]];
       j++;
@@ -329,13 +334,35 @@ export function instructionsIn(text: string, phrases: string[]): string[] {
   return [...found];
 }
 
-/** True when a fact check reason says the sentence should stay ("rescind", "is fine"). */
-export function saysKeep(reason: string, keepPhrases: string[]): boolean {
+/** The keep-phrase a fact check reason uses ("rescind", "is fine"), or null if none. */
+export function keepPhraseIn(reason: string, keepPhrases: string[]): string | null {
   const n = " " + normalize(reason) + " ";
-  return keepPhrases.some((p) => {
-    const k = normalize(p);
-    return k === "rescind" ? /\brescind/.test(n) : n.includes(" " + k + " ");
-  });
+  return (
+    keepPhrases.find((p) => {
+      const k = normalize(p);
+      return k === "rescind" ? /\brescind/.test(n) : n.includes(" " + k + " ");
+    }) ?? null
+  );
+}
+
+/** True when a fact check reason says the sentence should stay. */
+export function saysKeep(reason: string, keepPhrases: string[]): boolean {
+  return keepPhraseIn(reason, keepPhrases) !== null;
+}
+
+/** True when a text contains the belief phrase, ignoring case, punctuation and spacing. */
+export function containsBelief(text: string, belief: string | undefined): boolean {
+  const b = belief ? normalize(belief) : "";
+  return b.length > 0 && (" " + normalize(text) + " ").includes(" " + b + " ");
+}
+
+/**
+ * The belief inside a constraint sentence: the words between "the belief
+ * that " and ", and it is what stands between". Empty if it isn't there.
+ */
+export function beliefFromConstraint(constraint: string | undefined): string {
+  const m = /the belief that\s+(.+?),?\s+and it is what stands between/i.exec(constraint ?? "");
+  return m ? m[1].trim() : "";
 }
 
 /**
