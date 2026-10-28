@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { DOMAIN_KEYS } from "../src/lib/diagnostic/domains.ts";
-import { checkArchitectReport, CONSTRAINT_REF, enforceClosings, MIN_CARD_WORDS, type CheckDeps } from "../src/lib/diagnostic/v2/checks.ts";
+import { checkArchitectReport, CONSTRAINT_REF, enforceClosings, isClosingLine, MIN_CARD_WORDS, type CheckDeps } from "../src/lib/diagnostic/v2/checks.ts";
 import {
   boldnessFor,
   currentScreen,
@@ -25,6 +25,9 @@ import {
   DEFAULT_CLOSING,
   DESIGN_CLOSING,
   FACT_CHECK_SYSTEM,
+  INSTRUCTION_PHRASES,
+  NEUTRAL_LINES,
+  OLD_DEFAULT_CLOSING,
   QUESTION_HINTS,
   REACTION_SHAPES,
   REACTION_SYSTEM,
@@ -33,13 +36,15 @@ import {
   SECTION_NAMES,
   UI_TEXT,
 } from "../src/lib/diagnostic/v2/prompts.ts";
-import { cleanReaction } from "../src/lib/diagnostic/v2/reaction.ts";
+import { cleanReaction, decideReaction } from "../src/lib/diagnostic/v2/reaction.ts";
 import { cleanReason, parseFactCheck, parseReaction, parseReport, type ArchitectReport, type FactFlag } from "../src/lib/diagnostic/v2/schema.ts";
 import {
   anchorInAnswers,
   findNumbers,
+  instructionsIn,
   isWordsRemovedOnly,
   replaceDashes,
+  reportDisplay,
   repeatedWithinCard,
   sentencesOf,
   trimAtSentence,
@@ -327,8 +332,8 @@ test("a 5-word phrase used twice inside one card: rewritten once, then the later
   );
   assert.deepEqual(repeatedWithinCard("You went quiet at home. You went quiet at school."), [], "4 shared words is fine");
   // The fixed closing line stays; the other copy goes.
-  const withClosing = "It has been running for a long time in you. " + DEFAULT_CLOSING;
-  assert.deepEqual(repeatedWithinCard(withClosing, DEFAULT_CLOSING), ["It has been running for a long time in you."]);
+  const withClosing = "It is the way you move when you are tired. " + DEFAULT_CLOSING;
+  assert.deepEqual(repeatedWithinCard(withClosing, DEFAULT_CLOSING), ["It is the way you move when you are tired."]);
   const { d, calls } = deps();
   const out = await checkArchitectReport(report({ 3: card(3) + " It has run since you were small. It has run since you were small, quietly." }), ANSWERS, d);
   assert.deepEqual(calls.map((c) => c.fixes), [[CARD_FIX.repeatedWithin]]);
@@ -735,4 +740,163 @@ test("K.3: a card under 40 words after deletions is regenerated once, told what 
   assert.equal(out.report.sections[1].cards[0], card(22), "the new card went through the code checks");
   assert.equal(calls, 2, "and one more AI check, on the new card only");
   assert.deepEqual(checked, sentencesOf(card(22)));
+});
+
+// ---------------------------------------------------------------------------
+// Batch 5b-1
+
+test("5b-1 A: AI check entries on the closing lines are ignored, not counted, and start no per-card check", async () => {
+  const other = card(8).split(". ")[1] + ".";
+  let danglingCalls = 0;
+  const out = await checkArchitectReport(report(), ANSWERS, {
+    ...deps().d,
+    factCheck: async (numbered) => {
+      const n = (t: string) => numbered.find((x) => x.text === t)!.n;
+      return [
+        flag(n(DESIGN_CLOSING), "DELETE", "An aphorism."),
+        flag(n(DEFAULT_CLOSING), "EDIT", "Invents a duration.", "That is your default."),
+        flag(n(other), "DELETE", "Invents an event."),
+      ];
+    },
+    danglingCheck: async (s, c) => {
+      danglingCalls++;
+      assert.deepEqual([s, c], [2, 2], "only the card that lost a normal sentence");
+      return [];
+    },
+  });
+  const all = flatCards(out.report).join(" ");
+  assert.equal(all.split(DESIGN_CLOSING).length, 2, "design line exactly once");
+  assert.equal(all.split(DEFAULT_CLOSING).length, 2, "default line exactly once");
+  assert.ok(out.report.sections[3].cards[2].endsWith(DESIGN_CLOSING));
+  assert.ok(out.report.sections[2].cards[2].endsWith(DEFAULT_CLOSING));
+  assert.ok(!out.report.sections[2].cards[2].includes(other), "a normal sentence on the same card is still deleted");
+  assert.equal(out.debug.aiCheck.flagged, 1);
+  assert.equal(out.debug.closingSkipped, 2);
+  assert.ok(!out.debug.deleted.some((x) => x.sentence === DESIGN_CLOSING) && out.debug.edited.length === 0);
+  assert.equal(danglingCalls, 1);
+
+  // A card whose only deleted sentence was a closing line gets no per-card check.
+  let calls = 0;
+  await checkArchitectReport(report(), ANSWERS, {
+    ...deps().d,
+    factCheck: async (numbered) => [flag(numbered.find((x) => x.text === DESIGN_CLOSING)!.n, "DELETE", "An aphorism.")],
+    danglingCheck: async () => { calls++; return []; },
+  });
+  assert.equal(calls, 0);
+});
+
+test("5b-1 A and D: the closing-line skip covers both lines, the old wording, and the lines with a few words removed", () => {
+  for (const l of [DEFAULT_CLOSING, DESIGN_CLOSING, OLD_DEFAULT_CLOSING, "that's your design", "That is your default, and it has been running.", "That is your default."]) {
+    assert.ok(isClosingLine(l), l);
+  }
+  assert.ok(!isClosingLine("You see money as a test."));
+  assert.ok(!isClosingLine("That is your way."));
+});
+
+test("5b-1 D: the new default line is placed once at the end of Life by default card 3; old wording written by the AI is removed", () => {
+  assert.equal(DEFAULT_CLOSING, "That is your default: the way you move when you are not choosing.");
+  assert.equal(DESIGN_CLOSING, "That is your design.");
+  const r = enforceClosings(report({ 8: card(8) + " " + OLD_DEFAULT_CLOSING, 6: card(6) + " And it has been running for a long time." }));
+  assert.equal(r.sections[2].cards[2], card(8) + " " + DEFAULT_CLOSING);
+  assert.equal(r.sections[2].cards[0], card(6));
+  assert.equal(flatCards(r).join(" ").split(DEFAULT_CLOSING).length, 2);
+  assert.ok(r.sections[3].cards[2].endsWith(DESIGN_CLOSING));
+  // The instructions quote the new line.
+  assert.ok(buildReportSystem().includes(DEFAULT_CLOSING) && !buildReportSystem().includes(OLD_DEFAULT_CLOSING));
+});
+
+test("5b-1 D: a stored report with the old line still shows it unchanged", () => {
+  const stored = report({ 8: card(8) + " " + OLD_DEFAULT_CLOSING });
+  const parsed = parseReport(JSON.stringify(stored), SECTION_NAMES)!;
+  const shown = reportDisplay(parsed.sections, SECTION_NAMES, UI_TEXT.oldPattern, UI_TEXT.newPattern);
+  assert.ok(shown.sections[2].cards[2].endsWith(OLD_DEFAULT_CLOSING));
+});
+
+test("5b-1 B: the anchor match is forgiving about subjects, persons and contractions", () => {
+  assert.ok(anchorInAnswers("he didn't have that type of talk", "Honestly my dad didn't have that type of talk with us."));
+  assert.ok(anchorInAnswers("you get nervous", "When money comes in I get nervous."));
+  assert.ok(anchorInAnswers("your mum counted every coin", "My mum counted every coin."));
+  assert.ok(anchorInAnswers("she dont talk about it", "she doesn't talk... no, she don't talk about it"));
+  assert.ok(!anchorInAnswers("he hated being broke", "My dad worked nights."), "words not in the answers");
+  // Rule (b) needs 4 words left after dropping the subject.
+  assert.ok(!anchorInAnswers("he hated it", "my dad hated it"));
+  assert.ok(!anchorInAnswers("he really hated it", "my dad really hated it"), "3 words left is not enough");
+  assert.ok(anchorInAnswers("he really hated it all", "my dad really hated it all"));
+});
+
+test("5b-1 B: a real anchor miss after the retry shows the neutral line; a found anchor never does", async () => {
+  const answers = "My dad didn't have that type of talk.";
+  const reply = (anchor: string, crisis = false) => JSON.stringify({ reaction: "Money talk was missing at home.", anchor, crisis });
+  let n = 0;
+  const miss = await decideReaction(async () => (n++, reply("made up words here")), 2, answers, true, "gentle");
+  assert.equal(n, 2, "retried once");
+  assert.equal(miss.text, NEUTRAL_LINES[1]);
+  assert.equal(miss.text, "That gives a clear picture of who you looked up to.");
+  assert.ok(miss.neutral && miss.anchorOk === false && miss.thin === true);
+  assert.deepEqual(miss.problems, ["attempt 1: anchor not found in their answers", "attempt 2: anchor not found in their answers"]);
+  // A crisis flag on the missed reply is kept, so the support line still shows.
+  assert.equal((await decideReaction(async () => reply("nope nope", true), 5, answers, false, "medium")).crisis, true);
+  // Found (forgivingly) on the first try: the reaction is shown.
+  const found = await decideReaction(async () => reply("he didn't have that type of talk"), 2, answers, false, "gentle");
+  assert.equal(found.text, "Money talk was missing at home.");
+  assert.ok(!found.neutral && found.attempts === 1);
+  // Missed once, found on the retry: the retry is shown.
+  let k = 0;
+  const second = await decideReaction(async () => reply(k++ === 0 ? "nope" : "that type of talk"), 2, answers, false, "gentle");
+  assert.ok(!second.neutral && second.attempts === 2);
+  // The call failing twice also shows the neutral line.
+  const failed = await decideReaction(async () => { throw new Error("overloaded"); }, 8, answers, false, "direct");
+  assert.equal(failed.text, "That is a clear picture of the person you want to become.");
+  assert.ok(failed.fallback && failed.neutral);
+  assert.equal(NEUTRAL_LINES.length, 8);
+});
+
+test("5b-1 C: every advice phrase that can describe the person is flagged only as an instruction", async () => {
+  const flagged = (t: string) => instructionsIn(t, INSTRUCTION_PHRASES);
+  assert.deepEqual(flagged("You see it as a pause before the next source opens."), []);
+  assert.deepEqual(flagged("Pause before you reply to a slow month."), ["pause before"]);
+  assert.deepEqual(flagged("When you try to push through rehab, it flares."), []);
+  assert.deepEqual(flagged("Try to relax when your income dips."), ["try to"]);
+  assert.ok(flagged("You should take a moment first.").length > 0);
+  assert.deepEqual(flagged("Then, ask yourself what you need."), ["ask yourself"]);
+  assert.deepEqual(flagged("So notice when it starts."), ["notice when"]);
+  assert.deepEqual(flagged("You stop and ask yourself if it is worth it."), []);
+  assert.deepEqual(flagged("You feel you should be further along."), []);
+  // In a card: the description stays with no rewrite; the instruction is rewritten, then deleted.
+  const { d, calls } = deps();
+  const out = await checkArchitectReport(
+    report({ 1: card(1) + " You see it as a pause before the next source opens.", 4: card(4) + " Pause before you reply to a slow month." }),
+    ANSWERS,
+    d,
+  );
+  assert.deepEqual(calls.map((c) => [c.section, c.card]), [[1, 1]]);
+  assert.ok(out.report.sections[0].cards[1].endsWith("You see it as a pause before the next source opens."));
+  assert.equal(out.report.sections[1].cards[1], card(4));
+  // "I recommend" is always flagged.
+  const out2 = await checkArchitectReport(report({ 2: card(2) + " Honestly, I recommend a budget." }), ANSWERS, deps().d);
+  assert.equal(out2.report.sections[0].cards[2], card(2));
+});
+
+test("5b-1 E: section names and bullet headings show in Title Case for old and new reports", () => {
+  const expected = ["Where It Started", "Uncovered Internal Constraint", "Life By Default", "Life By Design"];
+  const old = { ...report(), sections: report().sections.map((s, i) => ({ ...s, name: ["Where it started", "The hidden block", "Your old pattern", "Your new pattern"][i] })) };
+  for (const r of [old, report()]) {
+    const shown = reportDisplay(r.sections, SECTION_NAMES, UI_TEXT.oldPattern, UI_TEXT.newPattern);
+    assert.deepEqual(shown.sections.map((s) => s.name), expected);
+    assert.equal(shown.oldHeading, "Life By Default");
+    assert.equal(shown.newHeading, "Life By Design");
+  }
+  assert.deepEqual([...SECTION_NAMES], ["Where it started", "Uncovered internal constraint", "Life by default", "Life by design"], "stored names and prompts unchanged");
+});
+
+test("5b-1 F: teaser claims and the floor idiom delete the sentence", async () => {
+  const phrases = ["That was not accidental.", "This is not accidental.", "It is not accidental at all.", "It was no accident.", "That is no accident.", "It is not an accident.", "Not by chance, you stopped.", "It is not a coincidence.", "That is no coincidence.", "It keeps pulling the floor out from under you.", "You pull the floor out first.", "She pulls the floor out."];
+  for (const p of phrases) assert.equal(cleanReaction("You stayed quiet. " + p).text, "You stayed quiet.", p);
+  assert.equal(cleanReaction("No accidents happened that year.").text, "No accidents happened that year.");
+  assert.equal(cleanReaction("You stayed quiet at the table.").text, "You stayed quiet at the table.");
+  const { d, calls } = deps();
+  const out = await checkArchitectReport(report({ 0: card(0) + " Your stopping was no accident.", 3: card(3) + " No accidents happened that year." }), ANSWERS, d);
+  assert.equal(calls.length, 0);
+  assert.equal(out.report.sections[0].cards[0], card(0));
+  assert.ok(out.report.sections[1].cards[0].endsWith("No accidents happened that year."));
 });

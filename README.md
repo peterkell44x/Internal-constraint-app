@@ -16,19 +16,20 @@ New diagnoses use a fixed 8-step flow (code in `src/lib/diagnostic/v2/`, stored 
 - **Reactions:** after each answer, the AI writes a short reaction.
   - Reactions mirror what the person said and add one light meaning that stays inside it, following a shape set for each question. They draw no cause and effect from the past unless the person made that link.
   - Boldness is tone only: gentle (answers 1 to 3), medium (4 and 5), direct (6 to 8). A thin answer (under 25 words) gets a mild reaction.
-  - Each reaction returns an anchor: words copied from the answers. The code checks the anchor is really there and retries once if not.
+  - Each reaction returns an anchor: words copied from the answers. The code checks the anchor is really there, forgivingly (case, punctuation and contractions ignored; "I / my" and "you / your" count as the same word, and so do "he / she / they"; a run of at least 4 words after dropping the first one or two also counts, which covers "he" for "my dad"), and retries once if not. If it is still not found, or the AI call fails, the question's neutral line (in `prompts.ts`) is shown instead.
   - The code deletes sentences that:
     - comment on the person's words ("the word X shows up 4 times")
     - tell them what they "actually" want, or reach for a cause ("runs your")
     - use "chase"
+    - make a teaser claim ("no accident", "not a coincidence") or use "pull the floor out"
     - use a timing or reference back the person never used ("at the same time", "simultaneously", "at once", "the old fear")
 
     It also replaces dashes, and cuts at a sentence end past 70 words. The same banned phrases and word echoes are deleted from report cards.
 - **Saving and resume:** every step is saved, and a reload continues at the same step.
-- **Report:** after the button, one AI call writes a 12-card report: Where it started, Uncovered internal constraint, Life by default and Life by design, 3 cards each. Then the Life by default / Life by design bullets. The report gives no action or advice. The two fixed closing lines ("That is your default, and it has been running for a long time." and "That is your design.") are placed once by the code. The report also returns a `constraint` sentence ("Your internal constraint is the belief that ..., and it is what stands between you and ..."); the code puts it as the last sentence of Uncovered internal constraint card 3 in place of that card's section point, and it goes through the same checks. If it is missing, one more call writes only that sentence; if that fails, the report ships without it.
+- **Report:** after the button, one AI call writes a 12-card report: Where it started, Uncovered internal constraint, Life by default and Life by design, 3 cards each. Then the Life by default / Life by design bullets. The report gives no action or advice. The two fixed closing lines ("That is your default: the way you move when you are not choosing." and "That is your design.") are placed once by the code; the earlier default wording is removed if the AI writes it (reports saved with it keep it). The AI fact check never touches these two lines. Section names and the bullet headings are shown in Title Case. The report also returns a `constraint` sentence ("Your internal constraint is the belief that ..., and it is what stands between you and ..."); the code puts it as the last sentence of Uncovered internal constraint card 3 in place of that card's section point, and it goes through the same checks. If it is missing, one more call writes only that sentence; if that fails, the report ships without it.
 - **Checks:** every number and quoted phrase must come from the answers (a difference between two ages or years they gave is allowed). There is also:
   - no banned wording (including "chase")
-  - no advice wording ("try to", "start doing", "remember to" and "make sure" count only as an instruction: at the start of a sentence or after should, could, need to, must, let's or you can)
+  - no advice wording. "I recommend" always counts; every other phrase on the list ("pause before", "ask yourself", "try to", "take a moment", "you should" and so on) counts only as an instruction: at the start of a sentence (after an optional "Then," or "So,") or after should, could, need to, must, let's or you can
   - no em or en dashes
   - no repeated sentence
   - no shared 8-word phrase between cards

@@ -37,6 +37,7 @@ import {
   DURATION_PHRASES,
   FACT_CHECK_KEEP_PHRASES,
   INSTRUCTION_PHRASES,
+  OLD_DEFAULT_CLOSING,
   REPORT_WORD_ECHO_PATTERNS,
   TIMING_PHRASES,
 } from "./prompts.ts";
@@ -89,6 +90,8 @@ export interface CheckDebug {
   dangling: { card: string; status: "ok" | "failed"; flagged: number; error?: string }[];
   /** The AI check on cards rewritten for being too short. */
   shortCheck?: { status: "ok" | "failed"; attempts: number; flagged: number; error?: string };
+  /** AI check entries aimed at a fixed closing line, skipped without counting them. */
+  closingSkipped?: number;
   /** What happened to the constraint sentence. */
   constraint: { status: "none" | "placed" | "edited" | "deleted"; text: string; replaced?: string; note?: string };
 }
@@ -123,13 +126,28 @@ function withCard(r: ArchitectReport, ref: Ref, text: string): ArchitectReport {
 // ---------------------------------------------------------------------------
 // The fixed closing lines
 
-const CLOSINGS: { ref: Ref; text: string; marker: string }[] = [
-  { ref: { s: 2, c: 2 }, text: DEFAULT_CLOSING, marker: "that is your default" },
-  { ref: { s: 3, c: 2 }, text: DESIGN_CLOSING, marker: "that is your design" },
+// A sentence with any marker is a copy of that closing line. The default
+// line's markers also catch its earlier wording ("..., and it has been
+// running for a long time"), so only the new line is left.
+const CLOSINGS: { ref: Ref; text: string; markers: string[] }[] = [
+  { ref: { s: 2, c: 2 }, text: DEFAULT_CLOSING, markers: ["that is your default", "been running for a long time"] },
+  { ref: { s: 3, c: 2 }, text: DESIGN_CLOSING, markers: ["that is your design"] },
 ];
 
 function closingKey(sentence: string): string {
   return normalize(sentence.replace(/\bthat['’]?s\b/gi, "that is"));
+}
+
+/**
+ * True when a sentence is one of the fixed closing lines (or the earlier
+ * default wording), or one of them with a few words removed that still says
+ * "your default", "your design" or "running for a long time". The AI check
+ * never touches these: the code places them.
+ */
+export function isClosingLine(sentence: string): boolean {
+  const key = closingKey(sentence);
+  const marked = ["your default", "your design", "running for a long time"].some((m) => (" " + key + " ").includes(" " + m + " "));
+  return [DEFAULT_CLOSING, OLD_DEFAULT_CLOSING, DESIGN_CLOSING].some((c) => key === closingKey(c) || (marked && isWordsRemovedOnly(closingKey(c), key)));
 }
 
 /** The closing line a card must end with, if any. */
@@ -200,7 +218,7 @@ export function enforceClosings(r: ArchitectReport): ArchitectReport {
   let out = enforceConstraint(r);
   for (const closing of CLOSINGS) {
     for (const ref of refs()) {
-      const copies = sentencesOf(cardAt(out, ref)).filter((s) => (" " + closingKey(s) + " ").includes(" " + closing.marker + " "));
+      const copies = sentencesOf(cardAt(out, ref)).filter((s) => closing.markers.some((m) => (" " + closingKey(s) + " ").includes(" " + m + " ")));
       if (copies.length) out = withCard(out, ref, removeSentences(cardAt(out, ref), new Set(copies)));
     }
     out = withCard(out, closing.ref, appendTo(cardAt(out, closing.ref), closing.text));
@@ -399,6 +417,19 @@ async function withRetry(
 }
 
 /**
+ * Drops AI check entries aimed at a fixed closing line: they are not
+ * applied, not counted as flagged, and never start the per-card check.
+ */
+function withoutClosings(numbered: Numbered[], flags: FactFlag[], debug: CheckDebug): FactFlag[] {
+  const kept = flags.filter((f) => {
+    const item = numbered.find((x) => x.n === f.n);
+    return !(item && item.ref !== "old" && item.ref !== "new" && isClosingLine(item.text));
+  });
+  debug.closingSkipped = (debug.closingSkipped ?? 0) + flags.length - kept.length;
+  return kept;
+}
+
+/**
  * Applies AI check entries: an entry whose reason says to keep the sentence
  * is ignored; a valid EDIT (words removed only) replaces the sentence; every
  * other entry deletes it. Returns the cards that lost a whole sentence, with
@@ -486,7 +517,9 @@ export async function checkArchitectReport(
   const numbered = numberAll(r);
   const flagged = await withRetry(() => deps.factCheck(numbered.map(({ n, text, section }) => ({ n, text, section }))), debug.aiCheck);
   if (flagged) {
-    const applied = applyFlags(r, numbered, flagged, debug);
+    const real = withoutClosings(numbered, flagged, debug);
+    debug.aiCheck.flagged = real.length;
+    const applied = applyFlags(r, numbered, real, debug);
     r = applied.report;
 
     // 3. One narrow call per card that lost a sentence: anything left
@@ -508,8 +541,9 @@ export async function checkArchitectReport(
           debug.dangling.push({ card: label(r, x.ref), status: "failed", flagged: 0, error: x.error });
           continue;
         }
-        debug.dangling.push({ card: label(r, x.ref), status: "ok", flagged: x.flags.length });
-        r = applyFlags(r, x.card, x.flags, debug).report;
+        const real = withoutClosings(x.card, x.flags, debug);
+        debug.dangling.push({ card: label(r, x.ref), status: "ok", flagged: real.length });
+        r = applyFlags(r, x.card, real, debug).report;
       }
     }
   }
@@ -537,7 +571,11 @@ export async function checkArchitectReport(
       debug.shortCheck = { status: "failed", attempts: 0, flagged: 0 };
       const again = numberAll(r, rewritten);
       const flags = await withRetry(() => deps.factCheck(again.map(({ n, text, section }) => ({ n, text, section }))), debug.shortCheck);
-      if (flags) r = applyFlags(r, again, flags, debug).report;
+      if (flags) {
+        const real = withoutClosings(again, flags, debug);
+        debug.shortCheck.flagged = real.length;
+        r = applyFlags(r, again, real, debug).report;
+      }
       r = enforceClosings(deleteFailing(r, answers, debug));
     }
   }

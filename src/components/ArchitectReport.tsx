@@ -5,10 +5,11 @@ import { useRef, useState } from "react";
 
 import type { UI_TEXT } from "@/lib/diagnostic/v2/prompts";
 import type { ArchitectReport as Report } from "@/lib/diagnostic/v2/schema";
+import { reportDisplay } from "@/lib/diagnostic/v2/text";
 
 interface Props {
   report: Omit<Report, "hidden_tie">;
-  /** The section labels from the config. They replace the stored names, so earlier reports show the current labels. */
+  /** The section labels from the config. They replace the stored names, so earlier reports show the current labels, in Title Case. */
   sectionNames: string[];
   /** A reaction came back with the crisis flag: the support line shows on the first card. */
   crisis: boolean;
@@ -54,7 +55,7 @@ function CardTrack({ cards, supportLine }: { cards: string[]; supportLine: strin
  */
 export default function ArchitectReport({ report, sectionNames, crisis, text }: Props) {
   const [section, setSection] = useState(0);
-  const sections = report.sections.map((s, i) => ({ name: sectionNames[i] ?? s.name, cards: s.cards.filter((c) => c.trim()) }));
+  const { sections, oldHeading, newHeading } = reportDisplay(report.sections, sectionNames, text.oldPattern, text.newPattern);
   const finalScreen = section >= sections.length;
 
   return (
@@ -82,11 +83,11 @@ export default function ArchitectReport({ report, sectionNames, crisis, text }: 
         <>
           <div className="pattern-columns">
             <div className="pattern-col old">
-              <h3>{text.oldPattern}</h3>
+              <h3>{oldHeading}</h3>
               <ul>{report.old_bullets.map((b, i) => <li key={i}>{b}</li>)}</ul>
             </div>
             <div className="pattern-col new">
-              <h3>{text.newPattern}</h3>
+              <h3>{newHeading}</h3>
               <ul>{report.new_bullets.map((b, i) => <li key={i}>{b}</li>)}</ul>
             </div>
           </div>

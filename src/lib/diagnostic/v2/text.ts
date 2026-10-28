@@ -209,10 +209,47 @@ export function trimAtSentence(text: string, max: number): string {
   return kept.join(" ");
 }
 
-/** True when the anchor (copied words) really appears in the answers, ignoring case and punctuation. */
+const CONTRACTIONS: Record<string, string> = {
+  cant: "can not", cannot: "can not", wont: "will not", dont: "do not", doesnt: "does not", didnt: "did not",
+  isnt: "is not", arent: "are not", wasnt: "was not", werent: "were not", havent: "have not", hasnt: "has not",
+  hadnt: "had not", couldnt: "could not", wouldnt: "would not", shouldnt: "should not", mustnt: "must not",
+  im: "i am", ive: "i have", youre: "you are", youve: "you have", youll: "you will", youd: "you would",
+  theyre: "they are", theyve: "they have", theyll: "they will", hes: "he is", shes: "she is", thats: "that is",
+  whats: "what is", theres: "there is", lets: "let us", ill: "i will", id: "i would",
+};
+// "ill" and "id" are real words too, but the same on both sides, so matching still works.
+
+/** One word for the anchor match: first and second person are one word, third person is another, and am / are are one. */
+const PERSON: Record<string, string> = {
+  i: "_p1", me: "_p1", my: "_p1", mine: "_p1", you: "_p1", your: "_p1", yours: "_p1",
+  he: "_p3", she: "_p3", they: "_p3", him: "_p3", her: "_p3", them: "_p3", his: "_p3", their: "_p3",
+  am: "_be", are: "_be", was: "_was", were: "_was",
+};
+
+function anchorWords(text: string): string[] {
+  return normalize(text)
+    .split(" ")
+    .filter(Boolean)
+    .flatMap((w) => (CONTRACTIONS[w] ?? w).split(" "))
+    .map((w) => PERSON[w] ?? w);
+}
+
+/**
+ * True when the anchor (words copied from their answers) is really there,
+ * forgivingly: case, punctuation and contractions are ignored, "I / my" and
+ * "you / your" count as the same word, and so do "he / she / they / his /
+ * their". It counts when the whole anchor appears as one run in the answers,
+ * or when it does after dropping its first one or two words (a subject swap
+ * such as "he" for "my dad"), as long as at least 4 words are left.
+ */
 export function anchorInAnswers(anchor: string, answers: string): boolean {
-  const a = normalize(anchor);
-  return a.length > 0 && (" " + normalize(answers) + " ").includes(" " + a + " ");
+  const a = anchorWords(anchor);
+  if (a.length === 0) return false;
+  const hay = " " + anchorWords(answers).join(" ") + " ";
+  const has = (words: string[]) => hay.includes(" " + words.join(" ") + " ");
+  if (has(a)) return true;
+  for (const drop of [1, 2]) if (a.length - drop >= 4 && has(a.slice(drop))) return true;
+  return false;
 }
 
 /**
@@ -271,11 +308,11 @@ export function durationsNotSaid(text: string, answers: string, phrases: string[
   return bannedIn(text, phrases).filter((p) => !said.includes(" " + normalize(p) + " "));
 }
 
-const INSTRUCTION_LEAD = /^(?:just)?$|\b(?:should|could|need to|needs to|must|lets|you can)(?: just)?$/;
+const INSTRUCTION_LEAD = /^(?:then|so)?(?: ?just)?$|\b(?:should|could|need to|needs to|must|lets|you can)(?: just)?$/;
 
 /**
- * The phrases a text uses as an instruction: at the start of a sentence
- * ("Try to relax.") or right after should, could, need to, must, let's or
+ * The phrases a text uses as an instruction: at the start of a sentence,
+ * after an optional "Then," or "So," ("Try to relax.") or right after should, could, need to, must, let's or
  * you can ("you can try to rest"). "When you try to push through" is not one.
  */
 export function instructionsIn(text: string, phrases: string[]): string[] {
@@ -299,4 +336,27 @@ export function saysKeep(reason: string, keepPhrases: string[]): boolean {
     const k = normalize(p);
     return k === "rescind" ? /\brescind/.test(n) : n.includes(" " + k + " ");
   });
+}
+
+/**
+ * What the report screens show: the configured section names (stored names
+ * are ignored, so old and new reports look the same) and the two bullet
+ * headings, all in Title Case. Display only; stored data is unchanged.
+ */
+export function reportDisplay(
+  sections: { name: string; cards: string[] }[],
+  sectionNames: readonly string[],
+  oldLabel: string,
+  newLabel: string,
+): { sections: { name: string; cards: string[] }[]; oldHeading: string; newHeading: string } {
+  return {
+    sections: sections.map((s, i) => ({ name: titleCase(sectionNames[i] ?? s.name), cards: s.cards.filter((c) => c.trim()) })),
+    oldHeading: titleCase(oldLabel),
+    newHeading: titleCase(newLabel),
+  };
+}
+
+/** "Life by default" becomes "Life By Default": the first letter of every word capitalised, for display only. */
+export function titleCase(text: string): string {
+  return text.replace(/(^|\s)(\p{Ll})/gu, (_, space: string, letter: string) => space + letter.toUpperCase());
 }

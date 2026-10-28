@@ -28,6 +28,8 @@ export interface Reaction {
   crisis: boolean;
   /** True when the AI call failed twice and the neutral line was shown instead. */
   fallback?: boolean;
+  /** True when the question's neutral line was shown instead of the AI's reaction. */
+  neutral?: boolean;
   /** Debug: the exact words from their answers the reaction is built on, and whether the code found them. */
   anchor?: string;
   anchorOk?: boolean;

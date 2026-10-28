@@ -120,11 +120,26 @@ export const QUESTION_HINTS = Object.fromEntries(
 // ---------------------------------------------------------------------------
 // Screen text
 
+/**
+ * The plain line shown instead of a reaction, one per question, when the
+ * reaction can't be used: its anchor was not found in the person's answers
+ * after the retry, or the AI call failed. No feelings, facts or timings.
+ */
+export const NEUTRAL_LINES: string[] = [
+  "Thank you, that gives a clear picture of what home was like.",
+  "That gives a clear picture of who you looked up to.",
+  "That gives a clear picture of where things stand right now.",
+  "That is a useful moment to look at.",
+  "Thank you for sharing that. It helps to see it clearly.",
+  "That gives a clear picture of how you respond when things go wrong.",
+  "That is a clear target.",
+  "That is a clear picture of the person you want to become.",
+];
+
 export const UI_TEXT = {
   halfway: "You're halfway there. I'm already seeing a pattern in what you've told me.",
   halfwayButton: "Continue",
   supportLine: "If you are in danger or thinking about hurting yourself, please call or text 988 (US and Canada), or your local emergency number.",
-  reactionFallback: "Thank you. Next question.",
   building: "Building your report",
   buildingDetail: "This usually takes about a minute. You can leave this page and come back.",
   reportFailed: "Something went wrong, try again.",
@@ -148,7 +163,9 @@ export const SECTION_NAMES: [string, string, string, string] = [
 ];
 
 /** The fixed closing lines of the last card in "Life by default" and "Life by design". */
-export const DEFAULT_CLOSING = "That is your default, and it has been running for a long time.";
+export const DEFAULT_CLOSING = "That is your default: the way you move when you are not choosing.";
+/** The earlier wording of the default closing line. Reports saved with it keep it; the AI writing it now is removed. */
+export const OLD_DEFAULT_CLOSING = "That is your default, and it has been running for a long time.";
 export const DESIGN_CLOSING = "That is your design.";
 
 // ---------------------------------------------------------------------------
@@ -231,8 +248,10 @@ export const REPORT_WORD_ECHO_PATTERNS: RegExp[] = [
 /**
  * Phrases that tell the person what they "really" want or reach for a cause.
  * Any sentence with one is deleted by the code, in reactions and report cards.
+ * The report instructions quote this first list; CODE_BANNED_PHRASES adds
+ * phrases the code deletes without them being named to the AI.
  */
-export const CODE_BANNED_PHRASES: string[] = [
+const PROMPT_BANNED_PHRASES: string[] = [
   "what you actually want",
   "what you really want",
   "what you're really",
@@ -250,6 +269,24 @@ export const CODE_BANNED_PHRASES: string[] = [
   "point in different directions",
   "the gap, if there is one",
   "if there is one",
+];
+
+export const CODE_BANNED_PHRASES: string[] = [
+  ...PROMPT_BANNED_PHRASES,
+  // Teaser claims
+  "was not accidental",
+  "is not accidental",
+  "not accidental",
+  "was no accident",
+  "no accident",
+  "not an accident",
+  "not by chance",
+  "not a coincidence",
+  "no coincidence",
+  // Idiom
+  "pulling the floor out",
+  "pull the floor out",
+  "pulls the floor out",
 ];
 
 /**
@@ -289,21 +326,33 @@ export const BANNED_WORDING: string[] = [
   "hidden tie",
 ];
 
-/** Instruction or advice wording. The report gives none; a card that has one is rewritten once, then the sentence is deleted. */
-export const ACTION_PHRASES: string[] = [
+/**
+ * Advice wording that can never describe the person. The report gives no
+ * advice; a card that has one is rewritten once, then the sentence is deleted.
+ */
+export const ACTION_PHRASES: string[] = ["i recommend"];
+
+/**
+ * Advice wording that is also ordinary description ("you see it as a pause
+ * before the next source opens", "when you try to push through"). These
+ * count only as an instruction: at the start of a sentence (after an
+ * optional "Then," or "So,"), or right after should, could, need to, must,
+ * let's or you can. Then the card is rewritten once, then the sentence is
+ * deleted.
+ */
+export const INSTRUCTION_PHRASES: string[] = [
   "pause before",
   "ask yourself",
   "get curious",
   "notice when",
   "remind yourself",
+  "take a moment",
+  "try to",
+  "start doing",
+  "remember to",
+  "make sure",
+  "you should",
 ];
-
-/**
- * Advice wording that is also ordinary description ("when you try to push
- * through"). These count only as an instruction: at the start of a sentence,
- * or right after should, could, need to, must, let's or you can.
- */
-export const INSTRUCTION_PHRASES: string[] = ["try to", "start doing", "remember to", "make sure"];
 
 export function buildReportSystem(): string {
   const [s1, s2, s3, s4] = SECTION_NAMES;
@@ -337,7 +386,7 @@ RULES
 - The last sentence of every card, and every section point, names the specific thing in plain words (what they do, what they believe, what it costs them), using their facts. No aphorisms, no abstract lines that could be said to anyone (never "that is where the real pattern lives").
 - Never write about other people's health or private details. Do not diagnose. No medical claims. Never say that thoughts, stress, fear or expectations cause illness, injury or a physical condition.
 - No invented durations or frequencies. Write "for years", "years of", "always", "every time", "all your life" or "constantly" only if the person used that wording. One set of friends who stopped texting is not "years of pulling back".
-- Never tell them what they "really" or "actually" want. Never write: ${CODE_BANNED_PHRASES.map((w) => '"' + w + '"').join(", ")}.
+- Never tell them what they "really" or "actually" want. Never write: ${PROMPT_BANNED_PHRASES.map((w) => '"' + w + '"').join(", ")}.
 - Do not comment on how they wrote their answers (never "you used that word", "the word X", "same word", "you called it").
 - No task, instruction or advice anywhere, in any card or bullet. The ONE exception is the single direction line in "${s4}" card 3 (shape below), which describes a new way of seeing and acting and is not a task. Never write "pause before", "ask yourself", "get curious", "notice when", "remind yourself", "this week", or steps or dates, and never tell them to "try to", "start doing", "remember to" or "make sure".
 - Do not praise or encourage anything harmful.

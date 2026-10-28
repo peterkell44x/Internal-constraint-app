@@ -24,9 +24,8 @@ import {
   REACTION_SYSTEM,
   SECTION_NAMES,
   THIN_ANSWER_WORDS,
-  UI_TEXT,
 } from "./prompts";
-import { cleanReaction } from "./reaction";
+import { decideReaction } from "./reaction";
 import {
   type ArchitectReport,
   CARD_SCHEMA,
@@ -35,12 +34,11 @@ import {
   parseCard,
   parseConstraint,
   parseFactCheck,
-  parseReaction,
   parseReport,
   REACTION_SCHEMA,
   REPORT_SCHEMA,
 } from "./schema";
-import { anchorInAnswers, countWords, hasDash, normalize } from "./text";
+import { countWords, normalize } from "./text";
 
 // The same model the app has always used, overridable with ANTHROPIC_MODEL.
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6";
@@ -69,9 +67,8 @@ function message(e: unknown): string {
 }
 
 /**
- * The reaction to one answer (steps 1 to 8). Retried once if the call fails, the reply can't be used, its anchor isn't
- * in their answers, or it has a dash. After that the code clean-up fixes what
- * it can, and if nothing usable is left, the neutral line is shown, so the
+ * The reaction to one answer (steps 1 to 8). The retry rule and when the
+ * question's neutral line is shown instead are in decideReaction, so the
  * chat is never blocked.
  */
 export async function generateReaction(domain: DomainKey, f: Flow, step: number): Promise<Reaction> {
@@ -79,32 +76,9 @@ export async function generateReaction(domain: DomainKey, f: Flow, step: number)
   const boldness = boldnessFor(step);
   const input = buildReactionInput(domain, f, step, boldness, thin);
   const answers = f.answers.slice(0, step).join("\n");
-  const problems: string[] = [];
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const parsed = parseReaction(await callJSON(REACTION_SYSTEM, input, REACTION_SCHEMA, 600));
-      if (!parsed) {
-        problems.push("attempt " + attempt + ": reply was not valid");
-        continue;
-      }
-      const anchorOk = anchorInAnswers(parsed.anchor, answers);
-      const dash = hasDash(parsed.reaction);
-      if (attempt === 1 && (!anchorOk || dash)) {
-        problems.push("attempt 1: " + [!anchorOk && "anchor not found in their answers", dash && "em dash"].filter(Boolean).join(", "));
-        continue;
-      }
-      const { text, fired } = cleanReaction(parsed.reaction, answers);
-      if (!text) {
-        problems.push("attempt " + attempt + ": nothing left after the code checks");
-        continue;
-      }
-      return { step, text, crisis: parsed.crisis, anchor: parsed.anchor, anchorOk, thin, boldness, fired, attempts: attempt, problems };
-    } catch (e) {
-      problems.push("attempt " + attempt + ": " + message(e));
-    }
-  }
-  console.error("Reaction " + step + " failed; using the fallback line", problems);
-  return { step, text: UI_TEXT.reactionFallback, crisis: false, fallback: true, thin, boldness, attempts: 2, problems };
+  const r = await decideReaction(() => callJSON(REACTION_SYSTEM, input, REACTION_SCHEMA, 600), step, answers, thin, boldness);
+  if (r.fallback) console.error("Reaction " + step + " failed; using the neutral line", r.problems);
+  return r;
 }
 
 /** What the report checks saw and did, stored with the report for the debug view. */

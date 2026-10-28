@@ -26,7 +26,8 @@ export default function ArchitectInternals({ flow, checks, original }: Props) {
           {flow.reactions.filter((r) => r.step <= ANSWER_STEPS).sort((a, b) => a.step - b.step).map((r) => (
             <li key={r.step}>
               <strong>{"Answer " + r.step}</strong>
-              {r.fallback && <span className="pill">AI failed twice, fallback line shown</span>}
+              {r.fallback && <span className="pill">AI failed twice</span>}
+              {r.neutral && <span className="pill">neutral line used</span>}
               {r.crisis && <span className="pill">crisis</span>}
               {r.thin && <span className="pill">THIN_ANSWER</span>}
               <div className="muted small">
@@ -102,6 +103,10 @@ export default function ArchitectInternals({ flow, checks, original }: Props) {
             <p className="small">
               AI check on cards rewritten for being short: {c.shortCheck.status === "ok" ? c.shortCheck.flagged + " sentence(s) flagged" : "failed (" + (c.shortCheck.error ?? "no reply") + ")"}
             </p>
+          )}
+
+          {(c.closingSkipped ?? 0) > 0 && (
+            <p className="muted small">AI check entries on the fixed closing lines, skipped: {c.closingSkipped}</p>
           )}
 
           <h3>Code checks that fired</h3>
