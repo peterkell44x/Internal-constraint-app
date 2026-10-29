@@ -964,10 +964,10 @@ test("5b-2 B (plumbing only): an idiom EDIT entry is applied; code alone never f
   assert.ok(out.report.sections[1].cards[0].endsWith("You stop when money dips."));
 });
 
-test("5b-2 C: an EDIT removes only the clause; a DELETE that would leave a card under 40 words is not applied; a normal DELETE still works", async () => {
+test("5b-2 C (5b-3 numbers): an EDIT removes only the clause; a DELETE that would leave a card under 25 words is not applied; a normal DELETE still works", async () => {
   assert.match(FACT_CHECK_SYSTEM, /who the person IS or the identity they built/);
   assert.match(FACT_CHECK_SYSTEM, /A sentence framed as a reading/);
-  assert.equal(PROTECT_CARD_WORDS, 40);
+  assert.equal(PROTECT_CARD_WORDS, 25);
   const long = "This costs you now because business progress is slower and less visible than school progress, and every day that does not feel like grade 12 reads as a failure.";
   const cut = "This costs you now because every day that does not feel like grade 12 reads as a failure.";
   const out = await checkArchitectReport(report({ 6: card(6) + " " + long }), ANSWERS + " grade 12", {
@@ -976,15 +976,15 @@ test("5b-2 C: an EDIT removes only the clause; a DELETE that would leave a card 
   });
   assert.equal(out.report.sections[2].cards[0], card(6) + " " + cut);
 
-  // A 3-sentence card of 39 words: a DELETE would leave 26, so it is kept.
-  const thin = card(3).split(". ").slice(0, 3).join(". ") + ".";
-  const target = thin.split(". ")[1] + ".";
+  // A 2-sentence card of 26 words: a DELETE would leave 13, so it is kept.
+  const thin = card(3).split(". ").slice(0, 2).join(". ") + ".";
+  const target = sentencesOf(thin)[1];
   const kept = await checkArchitectReport(report({ 3: thin }), ANSWERS, {
     ...deps().d,
     factCheck: async (numbered) => [flag(numbered.find((x) => x.text === target)!.n, "DELETE", "Invents an event.")],
   });
   assert.ok(kept.report.sections[1].cards[0].includes(target));
-  assert.deepEqual(kept.debug.keptShort, [{ card: "Uncovered internal constraint, card 1", sentence: target, reason: "Invents an event. (kept, card would be too short)" }]);
+  assert.deepEqual(kept.debug.keptShort, [{ card: "Uncovered internal constraint, card 1", sentence: target, reason: "Invents an event. (kept, card would drop under 25 words)" }]);
   // The same, with a valid edit attached, is applied as the edit.
   const asEdit = await checkArchitectReport(report({ 3: thin }), ANSWERS, {
     ...deps().d,
@@ -1171,5 +1171,102 @@ test("5b-2 K: the new hint shows under the last question in all four domains and
     const f = answeredUpTo(8);
     const sent = buildReactionInput(d, f, 8, "direct", false) + buildReportInput(d, f, false);
     assert.ok(!sent.includes("Then begin to embody that now."));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Batch 5b-3
+
+const STOP = "Stop letting " + BELIEF + " decide what you do today.";
+const ACT = "Act as if money can come in calm and steady ways, even before you feel ready.";
+
+test("5b-3 A: the two direction sentences of Life by design card 3 survive the repeat check; elsewhere they are caught", async () => {
+  // STOP shares 8+ words with the constraint; ACT is also copied into an earlier card.
+  const { d, calls } = deps();
+  const r = { ...report({ 11: card(11) + " " + STOP + " " + ACT, 8: card(8) + " " + ACT }), belief: BELIEF, constraint: B_CONSTRAINT };
+  const out = await checkArchitectReport(r, ANSWERS + " 5k", d);
+  const c3 = out.report.sections[3].cards[2];
+  assert.ok(c3.includes(STOP) && c3.includes(ACT), "both kept in Design card 3");
+  assert.ok(!calls.some((c) => c.section === 3 && c.card === 2), "no rewrite of Design card 3");
+  // The same sentence in another card (after the constraint) is still caught.
+  const out2 = await checkArchitectReport({ ...report({ 9: card(9) + " " + STOP }), belief: BELIEF, constraint: B_CONSTRAINT }, ANSWERS + " 5k", deps().d);
+  assert.equal(out2.report.sections[3].cards[0], card(9));
+  // A normal repeated sentence in Design card 3 is still caught.
+  const shared = "You learned that money only ever arrives with a fight attached.";
+  const out3 = await checkArchitectReport(report({ 2: card(2) + " " + shared, 11: card(11) + " " + shared }), ANSWERS, deps().d);
+  assert.equal(out3.report.sections[3].cards[2], card(11) + " " + DESIGN_CLOSING);
+});
+
+test("5b-3 B: a repeat between the constraint and an earlier sentence removes the earlier sentence and keeps the constraint", async () => {
+  const { d, calls } = deps();
+  const out = await checkArchitectReport({ ...report({ 4: card(4) + " " + B_SENTENCE }), belief: BELIEF, constraint: B_CONSTRAINT }, ANSWERS + " 5k", d);
+  assert.equal(out.report.sections[1].cards[1], card(4), "the earlier copy in Uncovered card 2 is removed");
+  assert.ok(out.report.sections[1].cards[2].endsWith(B_CONSTRAINT), "the constraint stays");
+  assert.equal(out.debug.constraint.status, "placed");
+  assert.equal(calls.length, 0);
+  assert.ok(out.debug.fired.includes("Uncovered internal constraint, card 2: constraint kept, earlier copy removed"));
+  assert.ok(out.debug.deleted.some((x) => x.sentence === B_SENTENCE && /constraint kept, earlier copy removed/.test(x.reason)));
+  // No repeat: untouched.
+  const plain = await checkArchitectReport({ ...report(), belief: BELIEF, constraint: B_CONSTRAINT }, ANSWERS + " 5k", deps().d);
+  assert.equal(plain.report.sections[1].cards[2], card(5) .split(". ").slice(0, 4).join(". ") + ". " + B_CONSTRAINT);
+  assert.ok(!plain.debug.fired.some((f) => f.includes("constraint kept")));
+});
+
+test("5b-3 C: a 55-word card can lose a 15-word sentence; under 25 is protected; rewritten cards are not protected", async () => {
+  // 40 + 15 = 55 words.
+  const fifteen = "You told your sister you would stop spending on new clothes after every single payday.";
+  const c55 = card(3).split(". ").slice(0, 3).join(". ") + ". Yes. " + fifteen;
+  assert.equal(fifteen.split(/\s+/).length, 15);
+  assert.equal(c55.split(/\s+/).length, 55);
+  const lose = await checkArchitectReport(report({ 3: c55 }), ANSWERS, {
+    ...deps().d,
+    factCheck: async (numbered) => [flag(numbered.find((x) => x.text === fifteen)!.n, "DELETE", "Invents an event.")],
+  });
+  assert.ok(!lose.report.sections[1].cards[0].includes(fifteen));
+  assert.equal(lose.debug.keptShort, undefined);
+
+  // A short card is rewritten; in the combined check of rewritten cards a delete applies even though it leaves fewer than 25 words.
+  const short = card(3).split(". ")[0] + ".";
+  const rewrite = card(20).split(". ").slice(0, 3).join(". ") + ".";
+  const second = rewrite.split(". ")[1] + ".";
+  let n = 0;
+  const out = await checkArchitectReport(report({ 3: short }), ANSWERS, {
+    regenerate: async () => rewrite,
+    factCheck: async (numbered) => (++n === 2 ? [flag(numbered.find((x) => x.text === second)!.n, "DELETE", "Invents an event.")] : []),
+  });
+  assert.equal(out.report.sections[1].cards[0], rewrite.replace(" " + second, ""));
+  assert.equal(out.debug.keptShort, undefined);
+  // A rewritten card left under 15 words after its check is discarded and the earlier version restored.
+  const first = rewrite.split(". ")[0] + ".";
+  let m = 0;
+  const gone = await checkArchitectReport(report({ 3: short }), ANSWERS, {
+    regenerate: async () => rewrite,
+    factCheck: async (numbered) => (++m === 2 ? numbered.filter((x) => x.text !== first).map((x) => flag(x.n, "DELETE", "Invents an event.")) : []),
+  });
+  assert.equal(gone.report.sections[1].cards[0], short);
+  assert.match(gone.debug.regenerated[0].discarded!, /under 15 words after the fact check/);
+});
+
+test("5b-3 D (instruction only): no 55-word minimum for a card anywhere in the report or rewrite instructions", () => {
+  const all = buildReportSystem() + CARD_REGEN_SYSTEM + JSON.stringify(CARD_FIX) + JSON.stringify(CARD_ROLES);
+  assert.ok(!/55 to 95/.test(all));
+  assert.match(CARD_REGEN_SYSTEM, /no more than 95 words; a shorter card is fine/);
+  assert.match(buildReportSystem(), /Each card no more than 95 words\./);
+});
+
+test("5b-3 E: one wording for the Design card 2 belief sentence; both spellings of the lead-in are kept", async () => {
+  assert.match(buildReportSystem(), /"Your block isn't \[what they might think the problem is\]\. It is the belief that \[belief, word for word\]\."/);
+  assert.match(buildReportSystem(), /\(the "Your block isn't \.\.\. It is the belief that \.\.\." card\)/);
+  assert.match(CARD_ROLES[3][1], /It is the belief that \[belief, word for word\]/);
+  const belief = "you can't rest until everything is handled for everyone else";
+  const constraint = "Your internal constraint is the belief that " + belief + ", and it is what stands between you and 5k saved.";
+  for (const lead of ["It's the belief that ", "It is the belief that "]) {
+    for (const b of [belief, belief.replace("can't", "cannot")]) {
+      const sentence = lead + b + ".";
+      const { d, calls } = deps();
+      const out = await checkArchitectReport({ ...report({ 10: card(10) + " " + sentence }), belief, constraint }, ANSWERS + " 5k", d);
+      assert.ok(out.report.sections[3].cards[1].endsWith(sentence), lead + b);
+      assert.ok(!calls.some((c) => c.section === 3 && c.card === 1));
+    }
   }
 });

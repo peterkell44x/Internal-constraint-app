@@ -350,10 +350,11 @@ export function saysKeep(reason: string, keepPhrases: string[]): boolean {
   return keepPhraseIn(reason, keepPhrases) !== null;
 }
 
-/** True when a text contains the belief phrase, ignoring case, punctuation and spacing. */
+/** True when a text contains the belief phrase, ignoring case, punctuation and spacing, with contractions expanded on both sides. */
 export function containsBelief(text: string, belief: string | undefined): boolean {
-  const b = belief ? normalize(belief) : "";
-  return b.length > 0 && (" " + normalize(text) + " ").includes(" " + b + " ");
+  const words = (t: string) => normalize(t).split(" ").filter(Boolean).flatMap((w) => (CONTRACTIONS[w] ?? w).split(" ")).join(" ");
+  const b = belief ? words(belief) : "";
+  return b.length > 0 && (" " + words(text) + " ").includes(" " + b + " ");
 }
 
 /**

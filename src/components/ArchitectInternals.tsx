@@ -187,7 +187,7 @@ export default function ArchitectInternals({ flow, checks, original }: Props) {
 
           {(c.keptShort ?? []).length > 0 && (
             <>
-              <h3>AI check deletes not applied (card would be too short)</h3>
+              <h3>AI check deletes not applied (card would drop under 25 words)</h3>
               <ul className="internals-list">
                 {c.keptShort!.map((k, i) => (
                   <li key={i}>
