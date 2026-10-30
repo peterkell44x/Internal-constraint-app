@@ -123,7 +123,9 @@ export interface CheckDebug {
   /** Cards still under the minimum length when the report shipped. */
   shortCards: string[];
   /** AI check entries ignored because their reason said to keep the sentence: the full note, and the keep-phrase that matched. */
-  ignored: { card: string; sentence: string; reason: string; note?: string; keepPhrase?: string }[];
+  ignored: { card: string; sentence: string; reason: string; note?: string; keepPhrase?: string; withdrawn?: boolean }[];
+  /** Idiom entries whose edit swapped words: refused, and the sentence kept as it was. */
+  idiomKept?: { card: string; sentence: string; reason: string; note: string }[];
   /** AI check deletes not applied because the card would drop under 25 words. */
   keptShort?: { card: string; sentence: string; reason: string }[];
   /**
@@ -558,7 +560,38 @@ function withoutClosings(numbered: Numbered[], flags: FactFlag[], debug: CheckDe
     return !(item && item.ref !== "old" && item.ref !== "new" && isClosingLine(item.text));
   });
   debug.closingSkipped = (debug.closingSkipped ?? 0) + flags.length - kept.length;
-  return kept;
+  return withoutWithdrawn(numbered, kept, debug);
+}
+
+/** True when the AI's note withdraws its own flag ("withdraw", "withdrawing", "withdrawn", "withdrew"). */
+export function isWithdrawn(note: string): boolean {
+  return /\bwithdr[ae]w\w*/i.test(note);
+}
+
+/**
+ * Drops AI check entries the AI withdrew in its own note: they are not
+ * applied, not counted as flagged, and never start the per-card check. They
+ * are listed with the other ignored entries in the debug view.
+ */
+function withoutWithdrawn(numbered: Numbered[], flags: FactFlag[], debug: CheckDebug): FactFlag[] {
+  return flags.filter((f) => {
+    if (!isWithdrawn(f.raw)) return true;
+    const item = numbered.find((x) => x.n === f.n);
+    if (item) {
+      const where = item.ref === "old" ? "Life by default bullets" : item.ref === "new" ? "Life by design bullets" : item.section + ", card " + ((item.ref as Ref).c + 1);
+      debug.ignored.push({ card: where, sentence: item.text, reason: f.reason, note: f.raw, withdrawn: true });
+    }
+    return false;
+  });
+}
+
+/**
+ * True when an entry is an idiom or cliche flag (fact check category 16).
+ * Entries carry no category, so this reads the AI's note: it names an idiom,
+ * a cliche or a stock phrase.
+ */
+export function isIdiomEntry(note: string): boolean {
+  return /\b(idioms?|idiomatic|clich[eé]s?|clich[eé]d|stock phrases?)\b/i.test(note);
 }
 
 /**
@@ -587,6 +620,11 @@ function applyFlags(
       continue;
     }
     let edit = f.verdict === "EDIT" && isWordsRemovedOnly(item.text, f.edit) ? replaceDashes(f.edit) : null;
+    // A refused idiom edit keeps the sentence as it was; it is not turned into a delete.
+    if (f.verdict === "EDIT" && !edit && isIdiomEntry(f.raw)) {
+      (debug.idiomKept ??= []).push({ card: where, sentence: item.text, reason: f.reason, note: f.raw });
+      continue;
+    }
     let reason = f.reason + (f.verdict === "EDIT" && !edit ? " (the edit changed words, so the sentence was deleted)" : "");
     // Thin-card protection: a delete that would leave the card under 25
     // words becomes its edit if it has a valid one, or is not applied.

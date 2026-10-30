@@ -104,12 +104,13 @@ export default function ArchitectInternals({ flow, checks, original }: Props) {
 
           {(c.ignored ?? []).length > 0 && (
             <>
-              <h4>AI check entries ignored (the reason said to keep the sentence)</h4>
+              <h4>AI check entries ignored (the note said to keep the sentence, or the AI withdrew its own flag)</h4>
               <ul className="internals-list">
                 {c.ignored!.map((g, i) => (
                   <li key={i}>
                     {g.card}: &ldquo;{g.sentence}&rdquo;
                     <div className="muted small">
+                      {g.withdrawn ? <>ignored: the AI withdrew its own flag. </> : null}
                       {g.keepPhrase ? <>ignored: keep-phrase matched &lsquo;{g.keepPhrase}&rsquo;. </> : null}
                       Full note: {g.note ?? g.reason}
                     </div>
@@ -194,6 +195,20 @@ export default function ArchitectInternals({ flow, checks, original }: Props) {
                     {e.card}: &ldquo;{e.before}&rdquo;
                     <div className="small">&rarr; &ldquo;{e.after}&rdquo;</div>
                     <div className="muted small">{e.reason}</div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {(c.idiomKept ?? []).length > 0 && (
+            <>
+              <h3>Idiom edits refused, sentence kept</h3>
+              <ul className="internals-list">
+                {c.idiomKept!.map((k, i) => (
+                  <li key={i}>
+                    {k.card}: &ldquo;{k.sentence}&rdquo;
+                    <div className="muted small">idiom edit refused, sentence kept. Full note: {k.note}</div>
                   </li>
                 ))}
               </ul>

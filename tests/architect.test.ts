@@ -1385,3 +1385,67 @@ test("5b-4 D and E: 'that belief' only after it is stated; the AI entry deletes 
   assert.ok(fine.report.sections[0].cards[0].endsWith(good));
   assert.ok(!fine.debug.deleted.some((x) => x.sentence === good));
 });
+
+// ---------------------------------------------------------------------------
+// Batch 5b-5
+
+const PEACE = "It feels like the peace you are building toward has been pulled back.";
+
+test("5b-5 A: an idiom entry whose edit swaps words keeps the sentence; other entries behave as before", async () => {
+  const run = (f: (n: number) => FactFlag) =>
+    checkArchitectReport(report({ 7: card(7) + " " + PEACE }), ANSWERS, {
+      ...deps().d,
+      factCheck: async (numbered) => [f(numbered.find((x) => x.text === PEACE)!.n)],
+    });
+  // Idiom note, edit swaps words: refused, sentence kept, shown in the debug view, not counted as deleted.
+  const swapped = await run((n) => ({ ...flag(n, "EDIT", "Stock idiom 'pulled back'.", "It feels like the peace you are building toward has slipped away."), raw: "Stock idiom 'pulled back'." }));
+  assert.ok(swapped.report.sections[2].cards[1].endsWith(PEACE));
+  assert.deepEqual(swapped.debug.idiomKept, [{ card: "Life by default, card 2", sentence: PEACE, reason: "Stock idiom 'pulled back'.", note: "Stock idiom 'pulled back'." }]);
+  assert.ok(!swapped.debug.deleted.some((x) => x.sentence === PEACE));
+  // Idiom note, edit only removes words: applied as today.
+  const removed = await run((n) => flag(n, "EDIT", "Cliche.", "It feels like the peace you are building toward."));
+  assert.ok(removed.report.sections[2].cards[1].endsWith("It feels like the peace you are building toward."));
+  assert.equal(removed.debug.idiomKept, undefined);
+  // Invented-claim note, edit changes words: still deleted.
+  const claim = await run((n) => flag(n, "EDIT", "Invents a feeling they never stated.", "It feels like the peace you want is far away."));
+  assert.equal(claim.report.sections[2].cards[1], card(7));
+  assert.match(claim.debug.deleted.find((x) => x.sentence === PEACE)!.reason, /edit changed words/);
+  // A plain DELETE: still deleted.
+  const del = await run((n) => flag(n, "DELETE", "Invents an event."));
+  assert.equal(del.report.sections[2].cards[1], card(7));
+});
+
+test("5b-5 B: an entry the AI withdraws in its own note is ignored, not counted, and starts no per-card check", async () => {
+  const note1 = "Section is Life by design but sentence retells the origin story, wait, this is Life by default. Flagging instead for cliche 'conditions were perfect', actually not a cliche. Withdrawing.";
+  const note2 = "Invents an event. I withdraw this.";
+  let danglingCalls = 0;
+  const out = await checkArchitectReport(report({ 7: card(7) + " " + PEACE }), ANSWERS, {
+    ...deps().d,
+    factCheck: async (numbered) => {
+      const n = numbered.find((x) => x.text === PEACE)!.n;
+      const other = numbered.find((x) => x.text === card(1).split(". ")[1] + ".")!.n;
+      return [
+        { ...flag(n, "EDIT", cleanReason(note1), "The peace was perfect."), raw: note1 },
+        { ...flag(other, "DELETE", cleanReason(note2)), raw: note2 },
+      ];
+    },
+    danglingCheck: async () => { danglingCalls++; return []; },
+  });
+  assert.ok(out.report.sections[2].cards[1].endsWith(PEACE), "EDIT entry withdrawn: sentence unchanged");
+  assert.equal(out.report.sections[0].cards[1], card(1), "DELETE entry withdrawn: sentence unchanged");
+  assert.equal(out.debug.aiCheck.flagged, 0);
+  assert.equal(danglingCalls, 0);
+  assert.deepEqual(out.debug.ignored.map((g) => [g.sentence, g.withdrawn, g.note]), [
+    [PEACE, true, note1],
+    [card(1).split(". ")[1] + ".", true, note2],
+  ]);
+  assert.equal(out.debug.idiomKept, undefined, "withdrawn first, so the idiom rule never sees it");
+  // A normal note is handled exactly as before.
+  const normal = await checkArchitectReport(report({ 7: card(7) + " " + PEACE }), ANSWERS, {
+    ...deps().d,
+    factCheck: async (numbered) => [flag(numbered.find((x) => x.text === PEACE)!.n, "DELETE", "Invents a feeling.")],
+  });
+  assert.equal(normal.report.sections[2].cards[1], card(7));
+  assert.equal(normal.debug.aiCheck.flagged, 1);
+  assert.deepEqual(normal.debug.ignored, []);
+});
