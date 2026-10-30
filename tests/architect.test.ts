@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { DOMAIN_KEYS } from "../src/lib/diagnostic/domains.ts";
 import {
   checkArchitectReport,
+  checkBelief,
   CONSTRAINT_REF,
   enforceClosings,
   isClosingLine,
@@ -59,6 +60,7 @@ import {
   anchorInAnswers,
   beliefFromConstraint,
   findNumbers,
+  frequenciesNotSaid,
   instructionsIn,
   isWordsRemovedOnly,
   replaceDashes,
@@ -1269,4 +1271,117 @@ test("5b-3 E: one wording for the Design card 2 belief sentence; both spellings 
       assert.ok(!calls.some((c) => c.section === 3 && c.card === 1));
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// Batch 5b-4
+
+const FIT_ANSWERS = ANSWERS + " Growing up I was always skinny. I want to be strong and lift again.";
+const FIT_BELIEF = "injuries always take everything away just when you are at your best";
+const FIT_AFTER = "injuries take everything away just when you are at your best";
+const fitConstraint = (b: string) => "Your internal constraint is the belief that " + b + ", and it is what stands between you and 5k saved.";
+
+test("5b-4 A (instruction only): no absolutes or repetition claims built on one event, in the report and rewrite rules", () => {
+  const rule = "Do not use 'always', 'every time', 'each time' or 'constantly' in the belief, the hidden tie or any card, unless the person's own answers use that wording for the same thing.";
+  assert.ok(buildReportSystem().includes(rule));
+  assert.ok(CARD_REGEN_SYSTEM.includes(rule));
+  assert.match(buildReportSystem(), /If they described one event, write 'when'/);
+});
+
+test("5b-4 B: a frequency word counts as backed only with the word after it", async () => {
+  assert.deepEqual(frequenciesNotSaid("You were always skinny.", FIT_ANSWERS, ["always"]), []);
+  assert.deepEqual(frequenciesNotSaid("Injuries always take it away.", FIT_ANSWERS, ["always"]), ["always"]);
+  assert.deepEqual(frequenciesNotSaid("You can't always rest.", "I cannot always rest", ["always"]), [], "contractions expanded on both sides");
+  // In a card: "always take" is caught even though the answers say "always skinny".
+  const { d, calls } = deps();
+  const out = await checkArchitectReport(report({ 6: card(6) + " Injuries always take everything away.", 7: card(7) + " You were always skinny." }), FIT_ANSWERS, d);
+  assert.deepEqual(calls.map((c) => [c.section, c.card]), [[2, 0]]);
+  assert.equal(out.report.sections[2].cards[0], card(6));
+  assert.ok(out.report.sections[2].cards[1].endsWith("You were always skinny."));
+});
+
+test("5b-4 B: an unbacked 'always' is removed from the belief, and the change is carried into the constraint and Design cards 2 and 3", async () => {
+  const r = {
+    ...report({
+      10: card(10) + " Your block isn't effort. It is the belief that " + FIT_BELIEF + ".",
+      11: card(11) + " Stop letting " + FIT_BELIEF + " decide what you do today. Act as if your body can come back stronger, even before you feel ready.",
+    }),
+    belief: FIT_BELIEF,
+    constraint: fitConstraint(FIT_BELIEF),
+  };
+  const out = await checkArchitectReport(r, FIT_ANSWERS, deps().d);
+  assert.equal(out.report.belief, FIT_AFTER);
+  assert.ok(out.report.sections[1].cards[2].endsWith(fitConstraint(FIT_AFTER)));
+  assert.ok(out.report.sections[3].cards[1].includes("It is the belief that " + FIT_AFTER + "."), "Design card 2");
+  assert.ok(out.report.sections[3].cards[2].includes("Stop letting " + FIT_AFTER + " decide what you do today."), "Design card 3");
+  assert.ok(!flatCards(out.report).join(" ").includes("always take"));
+  assert.deepEqual(out.debug.beliefFix, { before: FIT_BELIEF, after: FIT_AFTER, removed: ["always"], flagged: [] });
+  // The belief exemptions and the found check work with the changed belief.
+  assert.deepEqual(out.debug.belief, { text: FIT_AFTER, inConstraint: true, inDesign2: true });
+});
+
+test("5b-4 B: a backed 'always' is untouched; 'every time' is flagged, not edited; a plain belief is untouched", () => {
+  assert.deepEqual(checkBelief("you were always skinny so strength is not for you", FIT_ANSWERS), {
+    after: "you were always skinny so strength is not for you",
+    removed: [],
+    flagged: [],
+  });
+  assert.deepEqual(checkBelief("every time you get strong an injury follows", FIT_ANSWERS), {
+    after: "every time you get strong an injury follows",
+    removed: [],
+    flagged: ["every time"],
+  });
+  assert.deepEqual(checkBelief("getting strong gets taken away", FIT_ANSWERS), { after: "getting strong gets taken away", removed: [], flagged: [] });
+  assert.equal(checkBelief("you constantly lose what you build", FIT_ANSWERS).after, "you lose what you build");
+});
+
+test("5b-4 B: the debug view gets the belief fix only when something was found", async () => {
+  const flaggedOnly = await checkArchitectReport({ ...report(), belief: "every time you get strong an injury follows" }, FIT_ANSWERS, deps().d);
+  assert.deepEqual(flaggedOnly.debug.beliefFix, {
+    before: "every time you get strong an injury follows",
+    after: "every time you get strong an injury follows",
+    removed: [],
+    flagged: ["every time"],
+  });
+  assert.equal(flaggedOnly.report.belief, "every time you get strong an injury follows");
+  const plain = await checkArchitectReport({ ...report(), belief: "getting strong gets taken away" }, FIT_ANSWERS, deps().d);
+  assert.equal(plain.debug.beliefFix, undefined);
+});
+
+test("5b-4 C (judged by the AI): a repetition-claim entry deletes the sentence, with the 25-word protection still in place", async () => {
+  assert.match(FACT_CHECK_SYSTEM, /17\. says a pattern repeated, keeps happening or has happened many times, when the person described it only once/);
+  const claim = "The pattern has repeated enough that your mind now treats your best shape not as a destination but as a warning sign.";
+  const flagIt = async (numbered: { n: number; text: string }[]) => [flag(numbered.find((x) => x.text === claim)!.n, "DELETE", "Repetition claim built on one event.")];
+  const out = await checkArchitectReport(report({ 6: card(6) + " " + claim }), FIT_ANSWERS, { ...deps().d, factCheck: flagIt });
+  assert.equal(out.report.sections[2].cards[0], card(6));
+  const thin = card(6).split(". ")[0] + ". " + claim;
+  const kept = await checkArchitectReport(report({ 6: thin }), FIT_ANSWERS, { ...deps().d, factCheck: flagIt });
+  assert.ok(kept.report.sections[2].cards[0].includes(claim));
+  assert.match(kept.debug.keptShort![0].reason, /kept, card would drop under 25 words/);
+});
+
+test("5b-4 D and E: 'that belief' only after it is stated; the AI entry deletes a bare reference; a same-sentence restatement is untouched by code", async () => {
+  assert.ok(buildReportSystem().includes("Do not say 'that belief', 'this belief' or 'the belief' in a card until the belief has already been stated in plain words"));
+  assert.match(FACT_CHECK_SYSTEM, /18\. refers to "that belief", "this belief" or "the belief" when nothing earlier in the report/);
+  const bare = "That sequence, peak followed by loss, is the centre of that belief.";
+  const out = await checkArchitectReport(report({ 3: card(3) + " " + bare }), FIT_ANSWERS, {
+    ...deps().d,
+    factCheck: async (numbered) => [flag(numbered.find((x) => x.text === bare)!.n, "DELETE", "Refers to a belief not yet stated.")],
+  });
+  assert.equal(out.report.sections[1].cards[0], card(3));
+  // Blocked by the 25-word protection on a thin card, and the debug view says why.
+  const thin = card(3).split(". ")[0] + ". " + bare;
+  const kept = await checkArchitectReport(report({ 3: thin }), FIT_ANSWERS, {
+    ...deps().d,
+    factCheck: async (numbered) => [flag(numbered.find((x) => x.text === bare)!.n, "DELETE", "Refers to a belief not yet stated.")],
+  });
+  assert.ok(kept.report.sections[1].cards[0].includes(bare));
+  assert.match(kept.debug.keptShort![0].reason, /kept, card would drop under 25 words/);
+  // The good same-sentence restatement: no code check touches it.
+  const good = "That belief from home, that peace depends on conditions, is still deciding how you read every disruption.";
+  const { d, calls } = deps();
+  const fine = await checkArchitectReport(report({ 0: card(0) + " " + good }), FIT_ANSWERS, d);
+  assert.equal(calls.length, 0);
+  assert.ok(fine.report.sections[0].cards[0].endsWith(good));
+  assert.ok(!fine.debug.deleted.some((x) => x.sentence === good));
 });

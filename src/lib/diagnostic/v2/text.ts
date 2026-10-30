@@ -352,9 +352,38 @@ export function saysKeep(reason: string, keepPhrases: string[]): boolean {
 
 /** True when a text contains the belief phrase, ignoring case, punctuation and spacing, with contractions expanded on both sides. */
 export function containsBelief(text: string, belief: string | undefined): boolean {
-  const words = (t: string) => normalize(t).split(" ").filter(Boolean).flatMap((w) => (CONTRACTIONS[w] ?? w).split(" ")).join(" ");
-  const b = belief ? words(belief) : "";
-  return b.length > 0 && (" " + words(text) + " ").includes(" " + b + " ");
+  const b = belief ? plainWords(belief).join(" ") : "";
+  return b.length > 0 && (" " + plainWords(text).join(" ") + " ").includes(" " + b + " ");
+}
+
+/** Lowercase words, punctuation removed, contractions expanded ("can't" becomes "can not"). */
+export function plainWords(text: string): string[] {
+  return normalize(text).split(" ").filter(Boolean).flatMap((w) => (CONTRACTIONS[w] ?? w).split(" "));
+}
+
+/**
+ * Frequency phrases in a text ("always", "every time") that the person's
+ * answers do not back up. A phrase counts as backed only if the answers have
+ * it together with the word that follows it in the same sentence of the
+ * text: "always skinny" in the answers backs "always skinny", not "always
+ * take". At the end of a sentence, the phrase alone in the answers is enough.
+ */
+export function frequenciesNotSaid(text: string, answers: string, phrases: string[]): string[] {
+  const said = " " + plainWords(answers).join(" ") + " ";
+  const out = new Set<string>();
+  for (const sentence of sentencesOf(text)) {
+    const w = plainWords(sentence);
+    for (const p of phrases) {
+      const pw = plainWords(p);
+      for (let k = 0; k + pw.length <= w.length; k++) {
+        if (pw.some((x, j) => w[k + j] !== x)) continue;
+        const next = w[k + pw.length];
+        const key = next ? [...pw, next].join(" ") : pw.join(" ");
+        if (!said.includes(" " + key + " ")) out.add(p);
+      }
+    }
+  }
+  return [...out];
 }
 
 /**

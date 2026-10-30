@@ -60,11 +60,13 @@ import {
   containsBelief,
   countWords,
   durationsNotSaid,
+  frequenciesNotSaid,
   hasDash,
   instructionsIn,
   isWordsRemovedOnly,
   keepPhraseIn,
   normalize,
+  plainWords,
   removeSentences,
   repeatedSentences,
   repeatedWithinCard,
@@ -124,6 +126,12 @@ export interface CheckDebug {
   ignored: { card: string; sentence: string; reason: string; note?: string; keepPhrase?: string }[];
   /** AI check deletes not applied because the card would drop under 25 words. */
   keptShort?: { card: string; sentence: string; reason: string }[];
+  /**
+   * The belief's own frequency check, run first: words removed from it
+   * ("always", "constantly") with the text before and after, and other
+   * frequency phrases left in it but not backed by the answers.
+   */
+  beliefFix?: { before: string; after: string; removed: string[]; flagged: string[] };
   /** The belief, and whether its exact words are in the constraint and in "Life by design" card 2. */
   belief?: { text: string; inConstraint: boolean; inDesign2: boolean };
   /** The narrow check on each card that lost a sentence in the AI check. */
@@ -343,7 +351,7 @@ export function cardIssues(r: ArchitectReport, ref: Ref, answers: string): { kin
     kinds.push("em dash");
     fixes.push(CARD_FIX.dash);
   }
-  const durations = durationsNotSaid(card, answers, DURATION_PHRASES);
+  const durations = frequenciesNotSaid(card, answers, DURATION_PHRASES);
   if (durations.length) {
     kinds.push("invented duration (" + durations.join(", ") + ")");
     fixes.push(CARD_FIX.duration + " Found: " + durations.join(", ") + ".");
@@ -380,7 +388,7 @@ function deleteFailing(r: ArchitectReport, answers: string, debug: CheckDebug): 
       const action = actionIn(s);
       const phrases = bannedIn(s, CODE_BANNED_PHRASES);
       const echo = REPORT_WORD_ECHO_PATTERNS.some((p) => p.test(s));
-      const durations = durationsNotSaid(s, answers, DURATION_PHRASES);
+      const durations = frequenciesNotSaid(s, answers, DURATION_PHRASES);
       const timings = durationsNotSaid(s, answers, TIMING_PHRASES);
       if (phrases.length) remove.set(s, "banned phrase: " + phrases.join(", "));
       else if (echo) remove.set(s, "word echo");
@@ -630,6 +638,52 @@ function flaggedOn(r: ArchitectReport, numbered: Numbered[], flags: FactFlag[], 
   }).length;
 }
 
+/** The frequency words removed from the belief when the answers do not back them. */
+const BELIEF_REMOVABLE = ["always", "constantly"];
+
+/**
+ * The belief's frequency check. "always" or "constantly" not backed by the
+ * answers (the word and the one after it, as in frequenciesNotSaid) is
+ * removed, nothing else changed. Any other frequency phrase not backed is
+ * only reported.
+ */
+export function checkBelief(belief: string, answers: string): { after: string; removed: string[]; flagged: string[] } {
+  const said = " " + plainWords(answers).join(" ") + " ";
+  const tokens = belief.split(/\s+/).filter(Boolean);
+  const removed: string[] = [];
+  const kept = tokens.filter((t, i) => {
+    const word = normalize(t);
+    if (!BELIEF_REMOVABLE.includes(word)) return true;
+    const next = plainWords(tokens.slice(i + 1).join(" "))[0];
+    if (said.includes(" " + (next ? word + " " + next : word) + " ")) return true;
+    removed.push(word);
+    return false;
+  });
+  const after = removed.length ? kept.join(" ") : belief;
+  const flagged = frequenciesNotSaid(after, answers, DURATION_PHRASES).filter((p) => !BELIEF_REMOVABLE.includes(p));
+  return { after, removed: [...new Set(removed)], flagged };
+}
+
+/** Replaces every case-insensitive copy of `from` with `to` in a text. */
+function replaceAllText(text: string, from: string, to: string): string {
+  return text.replace(new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), to);
+}
+
+/**
+ * Applies a changed belief: the old belief text is replaced word for word in
+ * the constraint, in "Life by design" card 2, and in the "Stop letting ..."
+ * sentence of "Life by design" card 3.
+ */
+function withChangedBelief(r: ArchitectReport, before: string, after: string): ArchitectReport {
+  let out: ArchitectReport = { ...r, belief: after, constraint: r.constraint ? replaceAllText(r.constraint, before, after) : r.constraint };
+  out = withCard(out, DESIGN2_REF, replaceAllText(cardAt(out, DESIGN2_REF), before, after));
+  const c3 = cardAt(out, DESIGN3_REF);
+  const stop = sentencesOf(c3).filter((x) => /^stop letting\b/.test(normalize(x)));
+  let next = c3;
+  for (const x of stop) next = next.replace(x, replaceAllText(x, before, after));
+  return withCard(out, DESIGN3_REF, next);
+}
+
 export async function checkArchitectReport(
   report: ArchitectReport,
   answers: string,
@@ -646,6 +700,14 @@ export async function checkArchitectReport(
     dangling: [],
     constraint: { status: "none", text: "" },
   };
+  // 0. The belief's own frequency check comes first, and a changed belief is
+  //    carried into the constraint and "Life by design" cards 2 and 3 before
+  //    any other check, so the belief exemptions keep working.
+  if (report.belief) {
+    const fix = checkBelief(report.belief, answers);
+    if (fix.removed.length || fix.flagged.length) debug.beliefFix = { before: report.belief, after: fix.after, removed: fix.removed, flagged: fix.flagged };
+    if (fix.after !== report.belief) report = withChangedBelief(report, report.belief, fix.after);
+  }
   const placed = placeConstraint(report);
   if (report.constraint) debug.constraint = { status: "placed", text: report.constraint, replaced: placed.replaced };
   let r = enforceClosings(placed.report);

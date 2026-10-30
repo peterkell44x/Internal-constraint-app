@@ -56,6 +56,21 @@ export default function ArchitectInternals({ flow, checks, original }: Props) {
           {(c.reportProblems ?? []).length > 0 && <p className="muted small">Report retries: {c.reportProblems!.join("; ")}</p>}
 
           <h3>Belief</h3>
+          {c.beliefFix && (
+            <div className="small">
+              {c.beliefFix.removed.map((w) => (
+                <p key={w}>belief: removed &lsquo;{w}&rsquo; (not in the answers)</p>
+              ))}
+              {c.beliefFix.flagged.map((w) => (
+                <p key={w}>belief: &lsquo;{w}&rsquo; not in the answers (left in, not edited)</p>
+              ))}
+              {c.beliefFix.removed.length > 0 && (
+                <p className="muted small">
+                  Before: &ldquo;{c.beliefFix.before}&rdquo; &rarr; After: &ldquo;{c.beliefFix.after}&rdquo;
+                </p>
+              )}
+            </div>
+          )}
           {c.belief ? (
             <>
               <p className="small">&ldquo;{c.belief.text}&rdquo;</p>

@@ -31,7 +31,7 @@ New diagnoses use a fixed 8-step flow (code in `src/lib/diagnostic/v2/`, stored 
   - no banned wording (including "chase")
   - no advice wording. "I recommend" always counts; every other phrase on the list ("pause before", "ask yourself", "try to", "take a moment", "you should" and so on) counts only as an instruction: at the start of a sentence (after an optional "Then," or "So,") or after should, could, need to, must, let's or you can
   - no em or en dashes
-  - no duration or frequency ("for years", "always") the person did not use
+  - no duration or frequency ("for years", "always") the person did not use: the answers must have the phrase together with the word that follows it in the report ("always skinny" does not back "always take"). The belief is checked first: an unbacked "always" or "constantly" is removed from it (and from the constraint and Life by design cards 2 and 3); other unbacked phrases in it are only flagged in the debug view
   - no timing or reference back ("at the same time", "simultaneously", "at once", "the old fear") the person did not use
   - vague lines ("where the real pattern lives", "if there is one") are deleted straight away
 
