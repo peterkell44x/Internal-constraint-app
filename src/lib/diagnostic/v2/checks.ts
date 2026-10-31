@@ -124,6 +124,11 @@ export interface CheckDebug {
   shortCards: string[];
   /** AI check entries ignored because their reason said to keep the sentence: the full note, and the keep-phrase that matched. */
   ignored: { card: string; sentence: string; reason: string; note?: string; keepPhrase?: string; withdrawn?: boolean }[];
+  /**
+   * Bullets an AI check entry or a code check flagged. They are kept as the
+   * AI wrote them: bullets are never removed by the checks.
+   */
+  bulletKept?: { list: string; bullet: string; note: string; by: "ai" | "code" }[];
   /** Idiom entries whose edit swapped words: refused, and the sentence kept as it was. */
   idiomKept?: { card: string; sentence: string; reason: string; note: string }[];
   /** AI check deletes not applied because the card would drop under 25 words. */
@@ -502,15 +507,22 @@ function deleteRepeats(r: ArchitectReport, debug: CheckDebug): { report: Archite
   return { report: out, rewrite };
 }
 
+/**
+ * The bullets' code checks. Bullets are never removed, so the final screen
+ * always shows as many as the AI wrote: a bullet a check flags (invented
+ * number or quote, banned or advice wording, invented timing) is kept and
+ * listed in the debug view. Dashes are still replaced with commas.
+ */
 function cleanBullets(r: ArchitectReport, answers: string, debug: CheckDebug): ArchitectReport {
   const keep = (list: string[], name: string) =>
-    list
-      .map((b) => (hasDash(b) ? replaceDashes(b) : b))
-      .filter((b) => {
-        const bad = [...unsupportedItems(b, answers), ...bannedIn(b, BANNED_WORDING), ...actionIn(b), ...durationsNotSaid(b, answers, TIMING_PHRASES)];
-        if (bad.length) debug.deleted.push({ card: name, sentence: b, reason: "not allowed: " + bad.join(", "), by: "code" });
-        return bad.length === 0;
-      });
+    list.map((b) => {
+      const text = hasDash(b) ? replaceDashes(b) : b;
+      const bad = [...unsupportedItems(text, answers), ...bannedIn(text, BANNED_WORDING), ...actionIn(text), ...durationsNotSaid(text, answers, TIMING_PHRASES)];
+      if (bad.length && !(debug.bulletKept ?? []).some((x) => x.bullet === text && x.by === "code")) {
+        (debug.bulletKept ??= []).push({ list: name, bullet: text, note: "flagged by a code check: " + bad.join(", "), by: "code" });
+      }
+      return text;
+    });
   return { ...r, old_bullets: keep(r.old_bullets, "Life by default bullets"), new_bullets: keep(r.new_bullets, "Life by design bullets") };
 }
 
@@ -614,6 +626,11 @@ function applyFlags(
     const item = numbered.find((x) => x.n === f.n);
     if (!item) continue;
     const where = item.ref === "old" ? "Life by default bullets" : item.ref === "new" ? "Life by design bullets" : label(out, item.ref);
+    // Bullets are never removed or edited by the check, whatever the entry says.
+    if (item.ref === "old" || item.ref === "new") {
+      (debug.bulletKept ??= []).push({ list: where, bullet: item.text, note: f.raw, by: "ai" });
+      continue;
+    }
     const keepPhrase = keepPhraseIn(f.raw, FACT_CHECK_KEEP_PHRASES);
     if (keepPhrase) {
       debug.ignored.push({ card: where, sentence: item.text, reason: f.reason, note: f.raw, keepPhrase });
@@ -629,9 +646,10 @@ function applyFlags(
     // Thin-card protection: a delete that would leave the card under 25
     // words becomes its edit if it has a valid one, or is not applied.
     // Cards just rewritten are not protected.
-    if (!edit && item.ref !== "old" && item.ref !== "new" && !rewritten.some((x) => same(x, item.ref as Ref))) {
-      const remaining = wordsWithoutClosing(removeSentences(cardAt(out, item.ref), new Set([item.text])));
-      if (remaining < PROTECT_CARD_WORDS && sentencesOf(cardAt(out, item.ref)).includes(item.text)) {
+    const ref = item.ref;
+    if (!edit && !rewritten.some((x) => same(x, ref))) {
+      const remaining = wordsWithoutClosing(removeSentences(cardAt(out, ref), new Set([item.text])));
+      if (remaining < PROTECT_CARD_WORDS && sentencesOf(cardAt(out, ref)).includes(item.text)) {
         if (f.edit && isWordsRemovedOnly(item.text, f.edit)) {
           edit = replaceDashes(f.edit);
           reason = f.reason + " (applied as an edit: deleting would leave the card under " + PROTECT_CARD_WORDS + " words)";
@@ -641,14 +659,6 @@ function applyFlags(
         }
       }
     }
-    if (item.ref === "old" || item.ref === "new") {
-      const key = item.ref === "old" ? "old_bullets" : "new_bullets";
-      out = { ...out, [key]: edit ? out[key].map((b) => (b === item.text ? edit : b)) : out[key].filter((b) => b !== item.text) };
-      if (edit) debug.edited.push({ card: where, before: item.text, after: edit, reason });
-      else debug.deleted.push({ card: where, sentence: item.text, reason, by: "ai" });
-      continue;
-    }
-    const ref = item.ref;
     const card = cardAt(out, ref);
     if (!sentencesOf(card).includes(item.text)) continue;
     if (isConstraint(out, item.text)) {

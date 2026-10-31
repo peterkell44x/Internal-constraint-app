@@ -33,6 +33,7 @@ import {
   CARD_ROLES,
   DEFAULT_CLOSING,
   DESIGN_CLOSING,
+  DANGLING_CHECK_SYSTEM,
   FACT_CHECK_SYSTEM,
   INSTRUCTION_PHRASES,
   NEUTRAL_LINES,
@@ -313,7 +314,7 @@ test("an unsupported number: the rewrite may remove only the number; otherwise t
   assert.ok(out2.report.sections[0].cards[1].endsWith("You were young when it started."));
 });
 
-test("advice wording: the card is rewritten once, then the sentence is deleted; advice bullets are deleted", async () => {
+test("advice wording: the card is rewritten once, then the sentence is deleted; advice bullets are flagged but kept (5b-6)", async () => {
   const { d, calls } = deps();
   const r = report({ 11: card(11) + " Pause before reacting. Ask yourself what you need." });
   r.new_bullets = ["Try to stay calm", "Treating setbacks as interruptions", "Remember to breathe"];
@@ -323,7 +324,8 @@ test("advice wording: the card is rewritten once, then the sentence is deleted; 
   const c = out.report.sections[3].cards[2];
   assert.ok(!/pause before|ask yourself/i.test(c));
   assert.ok(c.endsWith(DESIGN_CLOSING));
-  assert.deepEqual(out.report.new_bullets, ["Treating setbacks as interruptions"]);
+  assert.deepEqual(out.report.new_bullets, ["Try to stay calm", "Treating setbacks as interruptions", "Remember to breathe"]);
+  assert.deepEqual(out.debug.bulletKept!.map((k) => [k.bullet, k.by]), [["Try to stay calm", "code"], ["Remember to breathe", "code"]]);
   assert.ok(out.debug.fired.some((f) => f.includes("advice wording")));
 });
 
@@ -702,7 +704,8 @@ test('J.4: "try to" and the like are advice only as an instruction', async () =>
   const r = report();
   r.old_bullets = ["Making sure everyone else eats first", "She tries to help", "You should make sure to rest"];
   const out2 = await checkArchitectReport(r, ANSWERS, deps().d);
-  assert.deepEqual(out2.report.old_bullets, ["Making sure everyone else eats first", "She tries to help"]);
+  assert.deepEqual(out2.report.old_bullets, ["Making sure everyone else eats first", "She tries to help", "You should make sure to rest"], "kept (5b-6)");
+  assert.deepEqual(out2.debug.bulletKept!.map((k) => k.bullet), ["You should make sure to rest"], "only the instruction is flagged");
 });
 
 const CONSTRAINT = "Your internal constraint is the belief that money only comes with a fight, and it is what stands between you and 5k saved.";
@@ -1448,4 +1451,55 @@ test("5b-5 B: an entry the AI withdraws in its own note is ignored, not counted,
   assert.equal(normal.report.sections[2].cards[1], card(7));
   assert.equal(normal.debug.aiCheck.flagged, 1);
   assert.deepEqual(normal.debug.ignored, []);
+});
+
+// ---------------------------------------------------------------------------
+// Batch 5b-6
+
+test("5b-6 A: the AI check never deletes or edits a bullet; a card sentence entry works as before", async () => {
+  const r = report();
+  const target = r.old_bullets[1];
+  const out = await checkArchitectReport(r, ANSWERS, {
+    ...deps().d,
+    factCheck: async (numbered) => [
+      { ...flag(numbered.find((x) => x.text === target)!.n, "DELETE", "States a repeated pattern."), raw: "States a repeated pattern when the person described distinct injuries." },
+      flag(numbered.find((x) => x.text === r.new_bullets[0])!.n, "EDIT", "Overstates.", "Looking at money"),
+    ],
+  });
+  assert.deepEqual(out.report.old_bullets, r.old_bullets, "all three old bullets");
+  assert.deepEqual(out.report.new_bullets, r.new_bullets, "the edited bullet is unchanged");
+  assert.deepEqual(out.debug.bulletKept, [
+    { list: "Life by default bullets", bullet: target, note: "States a repeated pattern when the person described distinct injuries.", by: "ai" },
+    { list: "Life by design bullets", bullet: r.new_bullets[0], note: "Overstates.", by: "ai" },
+  ]);
+  assert.ok(!out.debug.deleted.some((x) => x.sentence === target) && out.debug.edited.length === 0);
+  // A card sentence: deleted as before.
+  const sentence = card(4).split(". ")[1] + ".";
+  const card4 = await checkArchitectReport(report(), ANSWERS, { ...deps().d, factCheck: async (numbered) => [flag(numbered.find((x) => x.text === sentence)!.n, "DELETE", "Invents an event.")] });
+  assert.ok(!card4.report.sections[1].cards[1].includes(sentence));
+  assert.equal(card4.debug.bulletKept, undefined);
+});
+
+test("5b-6 A: no code check removes a bullet either; each list keeps the count the AI returned", async () => {
+  const r = report();
+  r.old_bullets = ["Spending 25k on a whim", "Chasing the next deal", "Feeling safe and stuck at the same time"];
+  const out = await checkArchitectReport(r, ANSWERS, deps().d);
+  assert.equal(out.report.old_bullets.length, 3);
+  assert.equal(out.report.new_bullets.length, 3);
+  assert.deepEqual(out.debug.bulletKept!.map((k) => k.bullet), r.old_bullets);
+});
+
+test("5b-6 B: the quoted metaphor example is gone, the variety sentence is in, and the metaphor is never deleted by code", async () => {
+  const all = buildReportSystem() + REACTION_SYSTEM + FACT_CHECK_SYSTEM + CARD_REGEN_SYSTEM + DANGLING_CHECK_SYSTEM;
+  assert.ok(!/delay bec(ame|omes) a verdict/i.test(all));
+  const variety = "Vary your images from one report to the next; do not lean on one favourite metaphor.";
+  assert.ok(buildReportSystem().includes(variety));
+  assert.ok(REACTION_SYSTEM.includes(variety));
+  assert.match(FACT_CHECK_SYSTEM, /A fresh, specific metaphor must never be flagged;/);
+  const line = "A delay becomes a verdict.";
+  const { d, calls } = deps();
+  const out = await checkArchitectReport(report({ 3: card(3) + " " + line }), ANSWERS, d);
+  assert.equal(calls.length, 0);
+  assert.ok(out.report.sections[1].cards[0].endsWith(line));
+  assert.equal(cleanReaction("You waited. " + line).text, "You waited. " + line);
 });

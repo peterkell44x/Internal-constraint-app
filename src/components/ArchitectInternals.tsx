@@ -201,6 +201,23 @@ export default function ArchitectInternals({ flow, checks, original }: Props) {
             </>
           )}
 
+          {(c.bulletKept ?? []).length > 0 && (
+            <>
+              <h3>Bullets flagged but kept</h3>
+              <ul className="internals-list">
+                {c.bulletKept!.map((k, i) => (
+                  <li key={i}>
+                    {k.list}: &ldquo;{k.bullet}&rdquo;
+                    <div className="muted small">
+                      {k.by === "ai" ? "bullet flag kept (bullets are never removed by the check). Full note: " : "bullet kept (bullets are never removed): "}
+                      {k.note}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
           {(c.idiomKept ?? []).length > 0 && (
             <>
               <h3>Idiom edits refused, sentence kept</h3>
