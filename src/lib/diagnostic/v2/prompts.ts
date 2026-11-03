@@ -366,7 +366,7 @@ export const INSTRUCTION_PHRASES: string[] = [
 
 /** The opening line of the CARDS section of the report instructions. */
 const CARDS_HEADER =
-  "CARDS (3 per section; the last card of each section ends with ONE plain sentence of about 20 words that states the point of the whole section, shape only: \"So the thing that started at home is still deciding how you read every setback.\")";
+  "CARDS (3 per section; the last card of each section ends with ONE plain sentence of about 20 words that states the point of the whole section and uses one specific fact from their answers (something they did, a number, or something they said), ideally a fact not already used in that card. It is not a general summary and not a saying.)";
 
 /** "Uncovered internal constraint" card 1, in the report instructions. */
 const UNCOVERED_CARD1 =
@@ -455,7 +455,7 @@ export const CARD_ROLES: string[][] = [
   [
     "Retell their childhood: the home, who was around, what they said (answer 1).",
     "Who they looked up to and what that taught them (answer 2), in their words.",
-    "How today connects back to this (answers 3 and 4), ending with one plain sentence stating the point of the section.",
+    "How today connects back to this (answers 3 and 4), ending with one plain sentence stating the point of the section, using one specific fact from their answers, ideally one not already used in that card.",
   ],
   [
     "The most emotional experience they described (answer 5), the centre of it all: what it did to how they see themselves, and their strongest line quoted. The first sentence of this card states, in plain words taken from their answers, what part of them has tied to what (the pattern the hidden tie describes). Do not use the belief's exact words in that sentence. After it, continue with the most emotional experience from answer 5 and their strongest line, as before.",
@@ -468,7 +468,7 @@ export const CARD_ROLES: string[][] = [
   [
     "What they believe and expect, shown with their own facts and numbers.",
     "How they see things and react when something goes wrong.",
-    "Where their attention goes and the thought that keeps coming back, then one plain sentence on what this pattern costs them now, using their facts, then one plain sentence stating the point of the section, then exactly: \"" + DEFAULT_CLOSING + "\"",
+    "Where their attention goes and the thought that keeps coming back, then one plain sentence on what this pattern costs them now, using their facts, then one plain sentence stating the point of the section, using one specific fact from their answers, ideally one not already used in that card, then exactly: \"" + DEFAULT_CLOSING + "\"",
   ],
   [
     "\"If nothing shifts, ...\" forecast: 3 to 4 short plain sentences, about 45 to 70 words, each a concrete picture of their situation six months from now, built ONLY from facts the person gave, using \"likely\", no new events, no invented durations, no \"not because X but because Y\", no abstract reasoning. Do not retell the origin story. If SENSITIVE is true, instead a gentle card about what they have been carrying.",
@@ -476,7 +476,7 @@ export const CARD_ROLES: string[][] = [
     "Proof and the new way: their own words from answer 8; one or two specific facts from their own life that show the new belief is possible; then two short sentences shaped \"Stop letting [the belief] decide what you do today.\" and " +
       "\"Move as if [the new belief] is already true, starting today.\" Word the new belief inside this sentence so the whole sentence reads naturally." +
       " (each under 25 words, the new belief a short plain phrase of about 12 words or fewer); then " +
-      "one plain sentence stating the point of the section" +
+      "one plain sentence stating the point of the section, using one specific fact from their answers, ideally one not already used in that card" +
       ", then exactly: \"" + DESIGN_CLOSING + "\" Do not retell the origin story. No steps, no dates, no \"this week\".",
   ],
 ];
