@@ -14,7 +14,7 @@
 // phrase used twice in one card) are deleted first. The card is rewritten
 // only if that leaves fewer than 2 sentences or 25 words, or more than half
 // its sentences repeated. These are never counted as a repeat: the belief
-// sentence of "Life by design" card 2, the "Stop letting ..." and "Act as if
+// sentence of "Life by design" card 2, the "Stop letting ..." and "Move as if
 // ..." sentences of "Life by design" card 3, and the constraint sentence (an
 // earlier sentence that repeats the constraint is removed instead).
 //
@@ -273,12 +273,13 @@ const same = (a: Ref, b: Ref) => a.s === b.s && a.c === b.c;
 
 /**
  * Sentences the repeat check never deletes: the belief sentence of "Life by
- * design" card 2, the "Stop letting ..." and "Act as if ..." sentences of
- * "Life by design" card 3, and the constraint sentence.
+ * design" card 2, the "Stop letting ..." and "Move as if ..." sentences
+ * of "Life by design" card 3 (and "Act as if ...", their earlier wording),
+ * and the constraint sentence.
  */
 function isRepeatExempt(r: ArchitectReport, ref: Ref, sentence: string): boolean {
   if (same(ref, DESIGN2_REF) && containsBelief(sentence, r.belief)) return true;
-  if (same(ref, DESIGN3_REF) && /^(stop letting|act as if)\b/.test(normalize(sentence))) return true;
+  if (same(ref, DESIGN3_REF) && /^(stop letting|move as if|act as if)\b/.test(normalize(sentence))) return true;
   return same(ref, CONSTRAINT_REF) && isConstraint(r, sentence);
 }
 

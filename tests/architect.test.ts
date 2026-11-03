@@ -1012,7 +1012,7 @@ test("5b-2 D and H (instruction only): the belief rules and the two-sentence act
   assert.match(sys, /It must explain how they react when things go wrong \(their answer 6\), and it must block the goal they named \(their answer 7\)/);
   assert.match(sys, /"worth", "power", "edge", "capacity"/);
   assert.match(sys, /tie the belief to the event they DID describe instead/);
-  assert.match(sys, /"Stop letting \[the belief\] decide what you do today\." and "Act as if \[the new belief\], even before you feel ready\."/);
+  assert.match(sys, /"Stop letting \[the belief\] decide what you do today\." and "Move as if \[the new belief\] is already true, starting today\."/);
   assert.ok(!/stop letting \[the old belief\] decide, and act as if/.test(sys + CARD_REGEN_SYSTEM + JSON.stringify(CARD_ROLES)));
 });
 
