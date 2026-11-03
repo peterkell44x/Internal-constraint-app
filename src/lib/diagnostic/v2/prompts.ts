@@ -357,6 +357,33 @@ export const INSTRUCTION_PHRASES: string[] = [
   "you should",
 ];
 
+// The pieces below are kept on their own source lines, apart from each
+// other, so later edits to one piece can be undone without touching the
+// others. The text the AI receives is the same as if they were written inline.
+
+/** The opening line of the CARDS section of the report instructions. */
+const CARDS_HEADER =
+  "CARDS (3 per section; the last card of each section ends with ONE plain sentence of about 20 words that states the point of the whole section, shape only: \"So the thing that started at home is still deciding how you read every setback.\")";
+
+/** "Uncovered internal constraint" card 1, in the report instructions. */
+const UNCOVERED_CARD1 =
+  "Card 1 is the most emotional experience they described (answer 5), the centre of it all: say what it did to how they see themselves, and quote their strongest line.";
+
+/** "Uncovered internal constraint" card 2, in the report instructions: its label... */
+const UNCOVERED_CARD2_LABEL =
+  "Card 2 is surface story vs real story: what they think the problem is, then what it is underneath";
+
+/** ...the rest of its description... */
+const UNCOVERED_CARD2_REST =
+  " (the hidden_tie in plain words). This is the most important card.";
+
+/** ...and anything added at its end. */
+const UNCOVERED_CARD2_END = "";
+
+/** "Uncovered internal constraint" card 3, in the report instructions. */
+const UNCOVERED_CARD3 =
+  "Card 3 is how they react when things go wrong (answer 6), using BOTH halves of that answer if it has two (for example what they do when it is really bad and when it slips a little), then the section point. The code replaces that section point with your \"constraint\" sentence.";
+
 export function buildReportSystem(): string {
   const [s1, s2, s3, s4] = SECTION_NAMES;
   return `You are writing the personal report for Architect, an app that helps people find the hidden belief that sabotages the goal they are going after.
@@ -404,9 +431,9 @@ RULES
 - Banned wording: ${BANNED_WORDING.map((w) => '"' + w + '"').join(", ")}.
 - If SENSITIVE is true: be gentle. Do not call anything they lived through their "fault" or a flaw. Replace the "If nothing shifts" forecast card with a gentle card about what they have been carrying.
 
-CARDS (3 per section; the last card of each section ends with ONE plain sentence of about 20 words that states the point of the whole section, shape only: "So the thing that started at home is still deciding how you read every setback.")
+${CARDS_HEADER}
 (1) "${s1}": Card 1 retells their childhood: the home, who was around, what they said (answer 1). Card 2 is who they looked up to and what that taught them (answer 2), in their words. Card 3 is how today connects back to this (answers 3 and 4), then the section point.
-(2) "${s2}": Card 1 is the most emotional experience they described (answer 5), the centre of it all: say what it did to how they see themselves, and quote their strongest line. Card 2 is surface story vs real story: what they think the problem is, then what it is underneath (the hidden_tie in plain words). This is the most important card. Card 3 is how they react when things go wrong (answer 6), using BOTH halves of that answer if it has two (for example what they do when it is really bad and when it slips a little), then the section point. The code replaces that section point with your "constraint" sentence.
+(2) "${s2}": ${UNCOVERED_CARD1} ${UNCOVERED_CARD2_LABEL}${UNCOVERED_CARD2_REST}${UNCOVERED_CARD2_END} ${UNCOVERED_CARD3}
 (3) "${s3}": the same template every time. Card 1: what they believe and expect, shown with their facts and numbers. Card 2: how they see things and react when something goes wrong. Card 3: where their attention goes and the thought that keeps coming back, then one plain sentence on what this pattern costs them now, using their facts, then the section point, then end with exactly this line, once: "${DEFAULT_CLOSING}"
 (4) "${s4}": do NOT retell the origin story here (parents, childhood, their first model of the goal); the first two sections already covered it.
 Card 1, forecast: "If nothing shifts, ..." 3 to 4 short plain sentences, about 45 to 70 words. Each sentence is a concrete picture of their situation six months from now, built ONLY from facts the person gave, using "likely", with no new events and no invented durations. No "not because X but because Y". No abstract reasoning.
@@ -427,7 +454,10 @@ export const CARD_ROLES: string[][] = [
   ],
   [
     "The most emotional experience they described (answer 5), the centre of it all: what it did to how they see themselves, and their strongest line quoted.",
-    "Surface story vs real story: what they think the problem is, then what it is underneath (the hidden tie in plain words, never labelled). One soft word allowed.",
+    // Card 2
+    "Surface story vs real story: what they think the problem is, then what it is underneath" +
+      " (the hidden tie in plain words, never labelled). One soft word allowed." +
+      "",
     "How they react when things go wrong (answer 6), using both halves of that answer if it has two. Do not end with a section point: the code adds the constraint sentence as the last sentence.",
   ],
   [
@@ -438,7 +468,11 @@ export const CARD_ROLES: string[][] = [
   [
     "\"If nothing shifts, ...\" forecast: 3 to 4 short plain sentences, about 45 to 70 words, each a concrete picture of their situation six months from now, built ONLY from facts the person gave, using \"likely\", no new events, no invented durations, no \"not because X but because Y\", no abstract reasoning. Do not retell the origin story. If SENSITIVE is true, instead a gentle card about what they have been carrying.",
     "Key insight and new belief: once, written exactly in this shape: \"Your block isn't [what they might think the problem is]. It is the belief that [belief, word for word].\" Then what will happen at the moment they try (the resistance they will feel, in their situation). Then the NEW belief in one plain sentence: the direct opposite of the old one, tied to something they do now and to one of their goals from answer 7. Do not retell the origin story. One soft word allowed.",
-    "Proof and the new way: their own words from answer 8; one or two specific facts from their own life that show the new belief is possible; then two short sentences shaped \"Stop letting [the belief] decide what you do today.\" and \"Act as if [the new belief], even before you feel ready.\" (each under 25 words, the new belief a short plain phrase of about 12 words or fewer); then one plain sentence stating the point of the section, then exactly: \"" + DESIGN_CLOSING + "\" Do not retell the origin story. No steps, no dates, no \"this week\".",
+    "Proof and the new way: their own words from answer 8; one or two specific facts from their own life that show the new belief is possible; then two short sentences shaped \"Stop letting [the belief] decide what you do today.\" and " +
+      "\"Act as if [the new belief], even before you feel ready.\"" +
+      " (each under 25 words, the new belief a short plain phrase of about 12 words or fewer); then " +
+      "one plain sentence stating the point of the section" +
+      ", then exactly: \"" + DESIGN_CLOSING + "\" Do not retell the origin story. No steps, no dates, no \"this week\".",
   ],
 ];
 
