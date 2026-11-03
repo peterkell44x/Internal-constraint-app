@@ -370,7 +370,7 @@ const CARDS_HEADER =
 
 /** "Uncovered internal constraint" card 1, in the report instructions. */
 const UNCOVERED_CARD1 =
-  "Card 1 is the most emotional experience they described (answer 5), the centre of it all: say what it did to how they see themselves, and quote their strongest line.";
+  "Card 1 is the most emotional experience they described (answer 5), the centre of it all: say what it did to how they see themselves, and quote their strongest line. The first sentence of this card states, in plain words taken from their answers, what part of them has tied to what (the pattern the hidden tie describes). Do not use the belief's exact words in that sentence. After it, continue with the most emotional experience from answer 5 and their strongest line, as before.";
 
 /** "Uncovered internal constraint" card 2, in the report instructions: its label... */
 const UNCOVERED_CARD2_LABEL =
@@ -381,7 +381,7 @@ const UNCOVERED_CARD2_REST =
   " (the hidden_tie in plain words). This is the most important card.";
 
 /** ...and anything added at its end. */
-const UNCOVERED_CARD2_END = "";
+const UNCOVERED_CARD2_END = " Do not repeat the first sentence of the previous card in the same words.";
 
 /** "Uncovered internal constraint" card 3, in the report instructions. */
 const UNCOVERED_CARD3 =
@@ -458,11 +458,11 @@ export const CARD_ROLES: string[][] = [
     "How today connects back to this (answers 3 and 4), ending with one plain sentence stating the point of the section.",
   ],
   [
-    "The most emotional experience they described (answer 5), the centre of it all: what it did to how they see themselves, and their strongest line quoted.",
+    "The most emotional experience they described (answer 5), the centre of it all: what it did to how they see themselves, and their strongest line quoted. The first sentence of this card states, in plain words taken from their answers, what part of them has tied to what (the pattern the hidden tie describes). Do not use the belief's exact words in that sentence. After it, continue with the most emotional experience from answer 5 and their strongest line, as before.",
     // Card 2
     "What they think the problem is, then what is underneath it" +
       " (the hidden tie in plain words, never labelled). One soft word allowed." +
-      "",
+      " Do not repeat the first sentence of the previous card in the same words.",
     "How they react when things go wrong (answer 6), using both halves of that answer if it has two. Do not end with a section point: the code adds the constraint sentence as the last sentence.",
   ],
   [
