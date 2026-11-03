@@ -290,6 +290,9 @@ export const CODE_BANNED_PHRASES: string[] = [
   "that is not a small thing",
   "that is no small thing",
   "not a small thing",
+  // Labels the report must not use
+  "surface story",
+  "real story",
 ];
 
 /**
@@ -297,7 +300,7 @@ export const CODE_BANNED_PHRASES: string[] = [
  * same wording. A card with one they did not use is rewritten once, then the
  * sentence is deleted.
  */
-export const DURATION_PHRASES: string[] = ["for years", "years of", "always", "every time", "all your life", "constantly"];
+export const DURATION_PHRASES: string[] = ["for years", "years of", "always", "every time", "each time", "all your life", "constantly"];
 
 /**
  * Timings and references back that count as invented unless the person used
@@ -371,7 +374,7 @@ const UNCOVERED_CARD1 =
 
 /** "Uncovered internal constraint" card 2, in the report instructions: its label... */
 const UNCOVERED_CARD2_LABEL =
-  "Card 2 is surface story vs real story: what they think the problem is, then what it is underneath";
+  "Card 2 is what they think the problem is, then what is underneath it";
 
 /** ...the rest of its description... */
 const UNCOVERED_CARD2_REST =
@@ -424,6 +427,7 @@ RULES
 - No invented durations or frequencies. Write "for years", "years of", "always", "every time", "all your life" or "constantly" only if the person used that wording. One set of friends who stopped texting is not "years of pulling back".
 - Never tell them what they "really" or "actually" want. Never write: ${PROMPT_BANNED_PHRASES.map((w) => '"' + w + '"').join(", ")}.
 - Do not comment on how they wrote their answers (never "you used that word", "the word X", "same word", "you called it").
+- Do not use the words 'surface story' or 'real story' in the report.
 - No task, instruction or advice anywhere, in any card or bullet. The ONE exception is the two direction sentences in "${s4}" card 3 (shape below), which describe a new way of seeing and acting and are not a task. Never write "pause before", "ask yourself", "get curious", "notice when", "remind yourself", "this week", or steps or dates, and never tell them to "try to", "start doing", "remember to" or "make sure".
 - Do not praise or encourage anything harmful.
 - No em dashes or en dashes anywhere; use a period or a comma.
@@ -432,6 +436,7 @@ RULES
 - If SENSITIVE is true: be gentle. Do not call anything they lived through their "fault" or a flaw. Replace the "If nothing shifts" forecast card with a gentle card about what they have been carrying.
 
 ${CARDS_HEADER}
+The first sentence of every card says plainly what that card is about. Do not open a card with a lead-in, a scene or background that comes before the point.
 (1) "${s1}": Card 1 retells their childhood: the home, who was around, what they said (answer 1). Card 2 is who they looked up to and what that taught them (answer 2), in their words. Card 3 is how today connects back to this (answers 3 and 4), then the section point.
 (2) "${s2}": ${UNCOVERED_CARD1} ${UNCOVERED_CARD2_LABEL}${UNCOVERED_CARD2_REST}${UNCOVERED_CARD2_END} ${UNCOVERED_CARD3}
 (3) "${s3}": the same template every time. Card 1: what they believe and expect, shown with their facts and numbers. Card 2: how they see things and react when something goes wrong. Card 3: where their attention goes and the thought that keeps coming back, then one plain sentence on what this pattern costs them now, using their facts, then the section point, then end with exactly this line, once: "${DEFAULT_CLOSING}"
@@ -455,7 +460,7 @@ export const CARD_ROLES: string[][] = [
   [
     "The most emotional experience they described (answer 5), the centre of it all: what it did to how they see themselves, and their strongest line quoted.",
     // Card 2
-    "Surface story vs real story: what they think the problem is, then what it is underneath" +
+    "What they think the problem is, then what is underneath it" +
       " (the hidden tie in plain words, never labelled). One soft word allowed." +
       "",
     "How they react when things go wrong (answer 6), using both halves of that answer if it has two. Do not end with a section point: the code adds the constraint sentence as the last sentence.",
@@ -479,6 +484,8 @@ export const CARD_ROLES: string[][] = [
 export const CARD_REGEN_SYSTEM = `You are rewriting ONE card of a personal Architect report. You get the person's answers, the hidden tie the report is built on, what this card is for, the other cards (do not repeat them), the current card, and what to fix.
 
 Rules: plain simple English, sentences of 20 words or fewer, no more than 95 words; a shorter card is fine. Speak to "you". Use at least 2 concrete details from their answers if they exist. Assume boldly about meaning, but never invent facts: no events, people, places, ages, numbers, dates, quotes or actions that are not in their answers. Never contradict or downplay what they said, and never deny a goal they stated. Do not state what other people believed or meant more strongly than the person said. Never state as fact anything about their looks, body, health, intelligence or worth. Do not repeat sentences or phrases from the other cards, and never repeat a phrase of 5 or more words inside this card. No medical claims. No task, instruction or advice of any kind: never "pause before", "ask yourself", "get curious", "notice when", "remind yourself", "this week", and never tell them to "try to", "start doing", "remember to" or "make sure". The only exception is the two sentences in Life by design card 3 shaped "Stop letting [the belief] decide what you do today." and "Act as if [the new belief], even before you feel ready.", which you keep if this is that card. In Life by design, do not retell the origin story (parents, childhood). No invented durations or frequencies ("for years", "years of", "always", "every time", "all your life", "constantly") unless the person used that wording. Do not use 'always', 'every time', 'each time' or 'constantly' in the belief, the hidden tie or any card, unless the person's own answers use that wording for the same thing. Do not say a pattern 'repeated', 'keeps happening' or 'has happened enough times' unless the person described it happening more than once. If they described one event, write 'when' (for example 'when you are at your best, it gets taken away'). Never tell them what they "really" or "actually" want. Never comment on the words they used. Never print the hidden tie as a label. No feelings, states or timings they did not state ("didn't care" never becomes "wasn't scared"); "the old fear" only refers back to something named in this card; never "at the same time", "simultaneously" or "at once", keep the order they gave. Do not turn positives into problems, never invent a gap, never "if there is one". The last sentence names the specific thing in plain words, never an aphorism. No em dashes or en dashes. Never use "chase" or "chasing". Do not use this wording: ${BANNED_WORDING.map((w) => '"' + w + '"').join(", ")}.
+
+The first sentence of every card says plainly what that card is about. Do not open a card with a lead-in, a scene or background that comes before the point. Do not use the words 'surface story' or 'real story' in the report.
 
 Return only JSON: {"card": "..."}`;
 
