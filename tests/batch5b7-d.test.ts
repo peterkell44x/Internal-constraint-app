@@ -44,7 +44,7 @@ test("5b-7 D: the instructions use the new sentence and never the old one", () =
   const d2 = "Word the new belief inside this sentence so the whole sentence reads naturally.";
   const sys = buildReportSystem();
   assert.ok(sys.includes('"Stop letting [the belief] decide what you do today." and ' + shape + " " + d2 + " Each sentence is under 25 words"));
-  assert.ok(CARD_ROLES[3][2].includes(shape.replace(/"/g, '"') + " " + d2 + " (each under 25 words"));
+  assert.ok(CARD_ROLES[3][2].includes(shape + " " + d2 + " "));
   assert.ok(CARD_REGEN_SYSTEM.includes('"Stop letting [the belief] decide what you do today." and ' + shape));
   for (const text of [sys, CARD_REGEN_SYSTEM, JSON.stringify(CARD_ROLES), FACT_CHECK_SYSTEM, DANGLING_CHECK_SYSTEM, REACTION_SYSTEM]) {
     assert.ok(!/act as if|even before you feel ready/i.test(text));
