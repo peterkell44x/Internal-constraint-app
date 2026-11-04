@@ -385,7 +385,7 @@ const UNCOVERED_CARD2_END = " Do not repeat the first sentence of the previous c
 
 /** "Uncovered internal constraint" card 3, in the report instructions. */
 const UNCOVERED_CARD3 =
-  "Card 3 is how they react when things go wrong (answer 6), using BOTH halves of that answer if it has two (for example what they do when it is really bad and when it slips a little), then the section point. The code replaces that section point with your \"constraint\" sentence.";
+  "Card 3 is how they react when things go wrong (answer 6), using BOTH halves of that answer if it has two (for example what they do when it is really bad and when it slips a little), then ONE plain sentence that links that reaction to the pattern in the hidden tie, using only what they said (this sentence stays in the card), then the section point. The code replaces that section point with your \"constraint\" sentence. Do not use the linking sentence as the section point.";
 
 export function buildReportSystem(): string {
   const [s1, s2, s3, s4] = SECTION_NAMES;
@@ -464,7 +464,7 @@ export const CARD_ROLES: string[][] = [
     "What they think the problem is, then what is underneath it" +
       " (the hidden tie in plain words, never labelled). One soft word allowed." +
       " Do not repeat the first sentence of the previous card in the same words.",
-    "How they react when things go wrong (answer 6), using both halves of that answer if it has two. Do not end with a section point: the code adds the constraint sentence as the last sentence.",
+    "How they react when things go wrong (answer 6), using both halves of that answer if it has two. Before that, one plain sentence links their reaction to the hidden tie, using only what they said. Do not end with a section point: the code adds the constraint sentence as the last sentence.",
   ],
   [
     "What they believe and expect, shown with their own facts and numbers.",
