@@ -13,9 +13,9 @@ const C2 = "Do not repeat the first sentence of the previous card in the same wo
 test("5b-7 C (instruction only): card 1 states the block first, card 2 does not repeat it, in the report and rewrite descriptions", () => {
   const sys = buildReportSystem();
   const section = sys.slice(sys.indexOf('(2) "Uncovered internal constraint":'), sys.indexOf('(3) "Life by default":'));
-  assert.ok(section.includes("quote their strongest line. " + C1 + " Card 2 is "), "card 1, report");
+  assert.ok(section.includes("quote their strongest line. " + C1), "card 1, report");
   assert.ok(section.includes("This is the most important card. " + C2 + " Card 3 is "), "card 2, report");
-  assert.ok(CARD_ROLES[1][0].endsWith("their strongest line quoted. " + C1), "card 1, rewrite");
+  assert.ok(CARD_ROLES[1][0].includes("their strongest line quoted. " + C1), "card 1, rewrite");
   assert.ok(CARD_ROLES[1][1].endsWith("One soft word allowed. " + C2), "card 2, rewrite");
   assert.equal(sys.split(C1).length, 2);
   assert.equal(sys.split(C2).length, 2);

@@ -370,7 +370,7 @@ const CARDS_HEADER =
 
 /** "Uncovered internal constraint" card 1, in the report instructions. */
 const UNCOVERED_CARD1 =
-  "Card 1 is the most emotional experience they described (answer 5), the centre of it all: say what it did to how they see themselves, and quote their strongest line. The first sentence of this card states, in plain words taken from their answers, what part of them has tied to what (the pattern the hidden tie describes). Do not use the belief's exact words in that sentence. After it, continue with the most emotional experience from answer 5 and their strongest line, as before.";
+  "Card 1 is the most emotional experience they described (answer 5), the centre of it all: say what it did to how they see themselves, only where their answer shows it, and quote their strongest line. The first sentence of this card states, in plain words taken from their answers, what part of them has tied to what (the pattern the hidden tie describes). Do not use the belief's exact words in that sentence. After it, continue with the most emotional experience from answer 5 and their strongest line, as before. Only write a feeling if they said they felt it. If they gave no strong line, do not make one up and do not mention that there is none: state what happened and what they did, in their words.";
 
 /** "Uncovered internal constraint" card 2, in the report instructions: its label... */
 const UNCOVERED_CARD2_LABEL =
@@ -459,7 +459,7 @@ export const CARD_ROLES: string[][] = [
     "How today connects back to this (answers 3 and 4), ending with one plain sentence stating the point of the section, using one specific fact from their answers, ideally one not already used in that card.",
   ],
   [
-    "The most emotional experience they described (answer 5), the centre of it all: what it did to how they see themselves, and their strongest line quoted. The first sentence of this card states, in plain words taken from their answers, what part of them has tied to what (the pattern the hidden tie describes). Do not use the belief's exact words in that sentence. After it, continue with the most emotional experience from answer 5 and their strongest line, as before.",
+    "The most emotional experience they described (answer 5), the centre of it all: what it did to how they see themselves, only where their answer shows it, and their strongest line quoted. The first sentence of this card states, in plain words taken from their answers, what part of them has tied to what (the pattern the hidden tie describes). Do not use the belief's exact words in that sentence. After it, continue with the most emotional experience from answer 5 and their strongest line, as before. Only write a feeling if they said they felt it. If they gave no strong line, do not make one up and do not mention that there is none: state what happened and what they did, in their words.",
     // Card 2
     "What they think the problem is, then what is underneath it" +
       " (the hidden tie in plain words, never labelled). One soft word allowed." +
