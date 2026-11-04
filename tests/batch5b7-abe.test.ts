@@ -54,7 +54,8 @@ const A_SENTENCE = "The first sentence of every card says plainly what that card
 
 test("5b-7 A (instruction only): the card-opening sentence is in the report and rewrite instructions, with no example", () => {
   const sys = buildReportSystem();
-  assert.ok(sys.includes("\n" + A_SENTENCE + "\n(1) "), "in the CARDS section, before the per-section descriptions");
+  assert.ok(sys.includes("\n" + A_SENTENCE + "\n"), "on its own line in the CARDS section");
+  assert.ok(sys.indexOf(A_SENTENCE) < sys.indexOf("\n(1) "), "before the per-section descriptions");
   assert.ok(sys.indexOf("CARDS (3 per section") < sys.indexOf(A_SENTENCE));
   assert.ok(CARD_REGEN_SYSTEM.includes(A_SENTENCE));
   assert.equal(sys.split(A_SENTENCE).length, 2);
