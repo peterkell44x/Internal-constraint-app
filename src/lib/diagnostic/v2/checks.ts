@@ -598,6 +598,11 @@ function withoutWithdrawn(numbered: Numbered[], flags: FactFlag[], debug: CheckD
   });
 }
 
+/** How many times a text uses the word "belief" or "beliefs". */
+function beliefWords(text: string): number {
+  return normalize(text).split(" ").filter((w) => w === "belief" || w === "beliefs").length;
+}
+
 /**
  * True when an entry is an idiom or cliche flag (fact check category 16).
  * Entries carry no category, so this reads the AI's note: it names an idiom,
@@ -644,6 +649,13 @@ function applyFlags(
       continue;
     }
     let reason = f.reason + (f.verdict === "EDIT" && !edit ? " (the edit changed words, so the sentence was deleted)" : "");
+    // An edit that removes the word "belief" leaves a broken sentence ("it is
+    // what that tells you"), so the sentence is deleted instead.
+    const removesBelief = !!edit && beliefWords(item.text) > beliefWords(edit);
+    if (removesBelief) {
+      edit = null;
+      reason = f.reason + " (the edit removed the word 'belief', so the sentence was deleted)";
+    }
     // Thin-card protection: a delete that would leave the card under 25
     // words becomes its edit if it has a valid one, or is not applied.
     // Cards just rewritten are not protected.
@@ -651,7 +663,7 @@ function applyFlags(
     if (!edit && !rewritten.some((x) => same(x, ref))) {
       const remaining = wordsWithoutClosing(removeSentences(cardAt(out, ref), new Set([item.text])));
       if (remaining < PROTECT_CARD_WORDS && sentencesOf(cardAt(out, ref)).includes(item.text)) {
-        if (f.edit && isWordsRemovedOnly(item.text, f.edit)) {
+        if (!removesBelief && f.edit && isWordsRemovedOnly(item.text, f.edit)) {
           edit = replaceDashes(f.edit);
           reason = f.reason + " (applied as an edit: deleting would leave the card under " + PROTECT_CARD_WORDS + " words)";
         } else {
