@@ -448,6 +448,7 @@ Card 2, key insight and new belief: say once, written exactly in this shape: "Yo
 Card 3, proof and the new way: their own words from answer 8 back to them; one or two specific facts from their own life that show the new belief is possible; then two short sentences in this shape: "Stop letting [the belief] decide what you do today." and "Move as if [the new belief] is already true, starting today." Word the new belief inside this sentence so the whole sentence reads naturally. Each sentence is under 25 words, and the new belief is a short plain phrase of about 12 words or fewer. Then the section point, then end with exactly this line, once: "${DESIGN_CLOSING}" Those two sentences are the only direction in the report. No steps, no dates, no "this week".
 Only the new belief inside that sentence may be reworded or shortened. The words 'Move as if' at the start and 'is already true, starting today' at the end stay exactly as written.
 Final screen: 3 bullets for "${UI_TEXT.oldPattern}" and 3 for "${UI_TEXT.newPattern}", each at most 9 words. They are short phrases about how they act or how they see things, built from their own facts (shape: "Treating setbacks as interruptions, not proof against you"). Never tasks, instructions or advice.
+Before you return the report, read each card once and rewrite any sentence that gives their behavior a name of your own, states a feeling they did not say they had, or does not follow from the sentence before it.
 
 Return only JSON:
 {"belief": "...", "hidden_tie": "...", "constraint": "...", "sections": [{"name":"${s1}","cards":["","",""]}, {"name":"${s2}","cards":["","",""]}, {"name":"${s3}","cards":["","",""]}, {"name":"${s4}","cards":["","",""]}], "old_bullets":["","",""], "new_bullets":["","",""]}`;
@@ -494,6 +495,8 @@ Rules: plain simple English, sentences of 20 words or fewer, no more than 95 wor
 In Where it started and Life by default, do not write 'the belief' or 'that belief'; say what they expect or assume instead.
 
 The first sentence of every card says plainly what that card is about. Do not open a card with a lead-in, a scene or background that comes before the point. Do not use the words 'surface story' or 'real story' in the report.
+
+Before you return the report, read each card once and rewrite any sentence that gives their behavior a name of your own, states a feeling they did not say they had, or does not follow from the sentence before it.
 
 Return only JSON: {"card": "..."}`;
 
