@@ -36,7 +36,7 @@ import {
   parseFactCheck,
   parseReport,
   REACTION_SCHEMA,
-  reportShapeError,
+  shapeProblem,
   REPORT_SCHEMA,
 } from "./schema";
 import { beliefFromConstraint, countWords, normalize } from "./text";
@@ -122,7 +122,7 @@ export async function generateArchitectReport(
     try {
       const reply = await callJSON(system, input, REPORT_SCHEMA, 8000);
       original = parseReport(reply, SECTION_NAMES);
-      if (!original) problems.push("attempt " + attempt + ": reply did not match the report shape: " + reportShapeError(reply));
+      if (!original) problems.push(shapeProblem(attempt, reply));
     } catch (e) {
       problems.push("attempt " + attempt + ": " + message(e));
     }

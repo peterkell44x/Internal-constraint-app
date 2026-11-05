@@ -151,6 +151,28 @@ export function reportShapeError(text: string): string | null {
 }
 
 /**
+ * When a reply has the wrong number of sections: how many, and each one's
+ * name and card count in order, for the debug view. Null otherwise.
+ */
+export function sectionSummary(text: string): string | null {
+  const j = json(text) as { sections?: unknown } | null;
+  if (!j || !Array.isArray(j.sections) || j.sections.length === 4) return null;
+  const parts = j.sections.map((sec, i) => {
+    const o = (sec ?? {}) as { name?: unknown; cards?: unknown };
+    const name = typeof o.name === "string" && o.name.trim() ? '"' + o.name.trim() + '"' : "(no name)";
+    const cards = Array.isArray(o.cards) ? o.cards.length + " card" + (o.cards.length === 1 ? "" : "s") : "no cards list";
+    return i + 1 + ". " + name + " (" + cards + ")";
+  });
+  return j.sections.length + " sections: " + parts.join("; ");
+}
+
+/** The debug line for a report attempt rejected for its shape. */
+export function shapeProblem(attempt: number, reply: string): string {
+  const summary = sectionSummary(reply);
+  return "attempt " + attempt + ": reply did not match the report shape: " + reportShapeError(reply) + (summary ? ". Sections in this attempt: " + summary : "");
+}
+
+/**
  * A valid report has a hidden tie, 4 sections of 3 non-empty cards, and 3
  * old and 3 new bullets. Section names come from the config, whatever the
  * model wrote, so renaming them there is enough. Null if invalid; see
