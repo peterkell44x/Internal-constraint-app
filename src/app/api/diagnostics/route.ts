@@ -1,6 +1,6 @@
 import { jsonError, userOr401 } from "@/lib/api";
 import { db } from "@/lib/db";
-import { isDomainKey } from "@/lib/diagnostic/domains";
+import { newDiagnosisError } from "@/lib/diagnostic/active-domains";
 import { flowJson } from "@/lib/diagnostic/store";
 import { emptyFlow } from "@/lib/diagnostic/v2/flow";
 
@@ -11,7 +11,8 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => null);
   const domain = body?.domain;
-  if (!isDomainKey(domain)) return jsonError(400, "Unknown domain.");
+  const error = newDiagnosisError(domain);
+  if (error) return jsonError(400, error);
 
   const d = await db.diagnostic.create({ data: { userId: user.id, domain, version: 2, flow: flowJson(emptyFlow()) } });
   return Response.json({ id: d.id }, { status: 201 });
