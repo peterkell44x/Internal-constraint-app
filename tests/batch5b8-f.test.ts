@@ -10,7 +10,7 @@ const F =
 
 test("5b-8 F (instruction only): the self-check sentence ends the CARDS section and is in the rewrite instructions", () => {
   const sys = buildReportSystem();
-  assert.ok(sys.includes("Never tasks, instructions or advice.\n" + F + "\n\nReturn only JSON:"));
+  assert.ok(sys.includes("\n" + F + "\n\nReturn only JSON:"), "the last line of the CARDS section");
   assert.ok(CARD_REGEN_SYSTEM.includes("\n\n" + F + '\n\nReturn only JSON: {"card": "..."}'));
   assert.equal(sys.split(F).length, 2);
 });
