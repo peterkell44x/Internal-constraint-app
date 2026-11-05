@@ -582,17 +582,22 @@ export function isWithdrawn(note: string): boolean {
 }
 
 /**
- * Drops AI check entries the AI withdrew in its own note: they are not
- * applied, not counted as flagged, and never start the per-card check. They
- * are listed with the other ignored entries in the debug view.
+ * Drops AI check entries the AI withdrew in its own note, and card entries
+ * whose note says to keep the sentence ("no fix needed", "is fine"): they
+ * are not applied, not counted as flagged, and never start the per-card
+ * check. They are listed with the other ignored entries in the debug view.
+ * Bullet entries with a keep-phrase are left to the bullet rule, as before.
  */
 function withoutWithdrawn(numbered: Numbered[], flags: FactFlag[], debug: CheckDebug): FactFlag[] {
   return flags.filter((f) => {
-    if (!isWithdrawn(f.raw)) return true;
     const item = numbered.find((x) => x.n === f.n);
+    const bullet = item?.ref === "old" || item?.ref === "new";
+    const keepPhrase = !isWithdrawn(f.raw) && !bullet ? keepPhraseIn(f.raw, FACT_CHECK_KEEP_PHRASES) : null;
+    if (!isWithdrawn(f.raw) && !keepPhrase) return true;
     if (item) {
       const where = item.ref === "old" ? "Life by default bullets" : item.ref === "new" ? "Life by design bullets" : item.section + ", card " + ((item.ref as Ref).c + 1);
-      debug.ignored.push({ card: where, sentence: item.text, reason: f.reason, note: f.raw, withdrawn: true });
+      if (keepPhrase) debug.ignored.push({ card: where, sentence: item.text, reason: f.reason, note: f.raw, keepPhrase });
+      else debug.ignored.push({ card: where, sentence: item.text, reason: f.reason, note: f.raw, withdrawn: true });
     }
     return false;
   });
@@ -613,9 +618,9 @@ export function isIdiomEntry(note: string): boolean {
 }
 
 /**
- * Applies AI check entries: an entry whose reason says to keep the sentence
- * is ignored; a valid EDIT (words removed only) replaces the sentence; every
- * other entry deletes it. Returns the cards that lost a whole sentence, with
+ * Applies AI check entries (those whose note says to keep the sentence, or
+ * withdraws the flag, were already dropped by withoutWithdrawn): a valid EDIT
+ * (words removed only) replaces the sentence; every other entry deletes it. Returns the cards that lost a whole sentence, with
  * what they lost.
  */
 function applyFlags(
@@ -635,11 +640,6 @@ function applyFlags(
     // Bullets are never removed or edited by the check, whatever the entry says.
     if (item.ref === "old" || item.ref === "new") {
       (debug.bulletKept ??= []).push({ list: where, bullet: item.text, note: f.raw, by: "ai" });
-      continue;
-    }
-    const keepPhrase = keepPhraseIn(f.raw, FACT_CHECK_KEEP_PHRASES);
-    if (keepPhrase) {
-      debug.ignored.push({ card: where, sentence: item.text, reason: f.reason, note: f.raw, keepPhrase });
       continue;
     }
     let edit = f.verdict === "EDIT" && isWordsRemovedOnly(item.text, f.edit) ? replaceDashes(f.edit) : null;
