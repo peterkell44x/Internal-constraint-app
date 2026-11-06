@@ -35,16 +35,19 @@ export const QUESTION_JOBS: string[] = [
 
 const MORE_DETAIL = " As much detail as you can give me.";
 
+/** The closing line of every Money question. */
+const MONEY_MORE_DETAIL = MORE_DETAIL;
+
 export const QUESTIONS: Record<DomainKey, string[]> = {
   money: [
-    "Let's start at the beginning. Where did you grow up, who was around you, and what was life like with money back then?" + MORE_DETAIL,
-    "Growing up, who did you look up to most? What did their life look like from the outside, especially around money?" + MORE_DETAIL,
-    "What does your life with money look like right now, day to day? Be as honest as you can." + MORE_DETAIL,
-    "Tell me about a time money was finally going well. What were you doing, and what happened next?" + MORE_DETAIL,
-    "Think back over your life. What are the most stressful, painful or emotional things you went through or watched happen around money?" + MORE_DETAIL,
-    "What do you do when things don't go your way with money?" + MORE_DETAIL,
-    "Put a number on it. Where do you want to be financially in 6 months, in 12 months, and beyond that?" + MORE_DETAIL,
-    "Picture the version of you who already has that. How do they act, how do they carry themselves, and how do they think?" + MORE_DETAIL,
+    "Let's start at the beginning. Where did you grow up, who was around you, and what was life like with money back then?" + MONEY_MORE_DETAIL,
+    "Growing up, who did you look up to most? What did their life look like from the outside, especially around money?" + MONEY_MORE_DETAIL,
+    "What does your life with money look like right now, day to day? Be as honest as you can." + MONEY_MORE_DETAIL,
+    "Tell me about a time money was finally going well. What were you doing, and what happened next?" + MONEY_MORE_DETAIL,
+    "Think back over your life. What are the most stressful, painful or emotional things you went through or watched happen around money?" + MONEY_MORE_DETAIL,
+    "What do you do when things don't go your way with money?" + MONEY_MORE_DETAIL,
+    "Put a number on it. Where do you want to be financially in 6 months, in 12 months, and beyond that?" + MONEY_MORE_DETAIL,
+    "Picture the version of you who already has that. How do they act, how do they carry themselves, and how do they think?" + MONEY_MORE_DETAIL,
   ],
   relationships: [
     "Let's start at the beginning. Where did you grow up, who was around you, and what were relationships like around you?" + MORE_DETAIL,
