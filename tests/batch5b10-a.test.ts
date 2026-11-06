@@ -23,7 +23,7 @@ test("5b-10 A: Money questions 2, 4, 5, 6 and 7 have the new wording; 1, 3 and 8
     "Think about a normal week. What you do, feel, and tell yourself.",
     "Think about what you were doing, how it felt, and what changed after.",
     "Something you lived or something you watched. Who was there, what happened, how it felt.",
-    "Think about what you actually do, even if it's not what you wish you did.",
+    "Think about what you actually do, think and tell yourself, even if it's not what you wish you did.",
     "Real numbers are best. Also say how it would feel and how you would see money by then.",
     "Think about how they talk, how they walk into a room, and how they handle a bad day. Also their beliefs, expectations, feelings, reactions, what they pay attention to, and what they think about. Then begin to embody that now.",
   ]);

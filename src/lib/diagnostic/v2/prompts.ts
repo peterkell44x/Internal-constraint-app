@@ -117,7 +117,7 @@ const DOMAIN_HINTS: Record<DomainKey, { q1: string; q7: string }> = {
 const MONEY_Q2_HINT = "Think about what they said, what they did, and how they handled money.";
 
 /** Money's own hint for question 6. */
-const MONEY_Q6_HINT = HINTS_BASE[5];
+const MONEY_Q6_HINT = "Think about what you actually do, think and tell yourself, even if it's not what you wish you did.";
 
 /** Hints that replace the shared ones for one domain, by question index. */
 const DOMAIN_HINT_OVERRIDES: Partial<Record<DomainKey, Record<number, string>>> = {
