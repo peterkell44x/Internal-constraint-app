@@ -19,7 +19,7 @@ test("5b-10 A: Money questions 2, 4, 5, 6 and 7 have the new wording; 1, 3 and 8
   assert.ok(q[7].startsWith("Picture the version of you who already has that. How do they act, how do they carry themselves, and how do they think? "));
   assert.deepEqual(QUESTION_HINTS.money, [
     "Think about the home, the people around you, the mood, and what was said about money.",
-    "Think about what they said, what they did, and how their life looked from the outside.",
+    "Think about what they said, what they did, and how they handled money.",
     "Think about a normal week. What you do, feel, and tell yourself.",
     "Think about what you were doing, how it felt, and what changed after.",
     "Something you lived or something you watched. Who was there, what happened, how it felt.",
