@@ -464,6 +464,7 @@ Card 3, proof and the new way: their own words from answer 8 back to them; one o
 Only the new belief inside that sentence may be reworded or shortened. The words 'Move as if' at the start and 'is already true, starting today' at the end stay exactly as written.
 Final screen: 3 bullets for "${UI_TEXT.oldPattern}" and 3 for "${UI_TEXT.newPattern}", each at most 9 words. They are short phrases about how they act or how they see things, built from their own facts (shape: "Treating setbacks as interruptions, not proof against you"). Never tasks, instructions or advice.
 Each bullet must describe something a person could picture someone doing or seeing, using a thing, amount, person or place the person named in their answers. Do not use an abstract noun as if it were a place or an object. If a bullet could not be acted out or filmed, rewrite it.
+Life By Default bullets are only things the person said they do or live. One event is not a habit. Life By Design bullets are the new way of acting or seeing that the person is moving toward. Never put in Life By Design something the person already does or said they already do.
 Before you return the report, read each card once and rewrite any sentence that gives their behavior a name of your own, states a feeling they did not say they had, or does not follow from the sentence before it.
 
 Return only JSON:
