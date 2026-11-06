@@ -12,7 +12,7 @@ test("5b-9 B (instruction only): the bullet rule follows the bullet instructions
   const sys = buildReportSystem();
   assert.ok(
     sys.includes(
-      'Final screen: 3 bullets for "Life by default" and 3 for "Life by design", each at most 9 words. They are short phrases about how they act or how they see things, built from their own facts (shape: "Treating setbacks as interruptions, not proof against you"). Never tasks, instructions or advice.\n' + B + "\n",
+      'Final screen: 3 bullets for "Life by default" and 3 for "Life by design", each at most 9 words. They are short phrases about how they act or how they see things, built from their own facts. Never tasks, instructions or advice.\n' + B + "\n",
     ),
   );
   assert.equal(sys.split(B).length, 2);
