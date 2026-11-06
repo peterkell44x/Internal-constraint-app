@@ -85,11 +85,12 @@ test("4 domains with 8 non-empty questions each, 8 jobs, 4 section names", () =>
   assert.equal(SECTION_NAMES.length, 4);
 });
 
-test('every question asks for "As much detail as you can give me." exactly once', () => {
+test('every question ends with its closing line exactly once ("The more detail, the better." for Money, 5b-10)', () => {
   for (const d of DOMAIN_KEYS) {
+    const closing = d === "money" ? "The more detail, the better." : "As much detail as you can give me.";
     for (const q of QUESTIONS[d]) {
-      assert.ok(q.endsWith("As much detail as you can give me."), q);
-      assert.equal(q.split("As much detail as you can give me.").length, 2, q);
+      assert.ok(q.endsWith(closing), q);
+      assert.equal(q.split(closing).length, 2, q);
     }
   }
 });

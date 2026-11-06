@@ -36,7 +36,7 @@ export const QUESTION_JOBS: string[] = [
 const MORE_DETAIL = " As much detail as you can give me.";
 
 /** The closing line of every Money question. */
-const MONEY_MORE_DETAIL = MORE_DETAIL;
+const MONEY_MORE_DETAIL = " The more detail, the better.";
 
 export const QUESTIONS: Record<DomainKey, string[]> = {
   money: [
