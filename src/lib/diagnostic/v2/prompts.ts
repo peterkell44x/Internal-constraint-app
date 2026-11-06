@@ -113,10 +113,21 @@ const DOMAIN_HINTS: Record<DomainKey, { q1: string; q7: string }> = {
   },
 };
 
+/** Money's own hint for question 2. */
+const MONEY_Q2_HINT = HINTS_BASE[1];
+
+/** Money's own hint for question 6. */
+const MONEY_Q6_HINT = HINTS_BASE[5];
+
+/** Hints that replace the shared ones for one domain, by question index. */
+const DOMAIN_HINT_OVERRIDES: Partial<Record<DomainKey, Record<number, string>>> = {
+  money: { 1: MONEY_Q2_HINT, 5: MONEY_Q6_HINT },
+};
+
 export const QUESTION_HINTS = Object.fromEntries(
   (Object.keys(DOMAIN_HINTS) as DomainKey[]).map((d) => [
     d,
-    HINTS_BASE.map((h, i) => (i === 0 ? DOMAIN_HINTS[d].q1 : i === 6 ? DOMAIN_HINTS[d].q7 : h)),
+    HINTS_BASE.map((h, i) => (i === 0 ? DOMAIN_HINTS[d].q1 : i === 6 ? DOMAIN_HINTS[d].q7 : (DOMAIN_HINT_OVERRIDES[d]?.[i] ?? h))),
   ]),
 ) as Record<DomainKey, string[]>;
 
